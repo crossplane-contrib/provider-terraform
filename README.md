@@ -102,6 +102,31 @@ spec:
 Standard `.git-credentials` filename is important to keep so provider-terraform
 controller will be able to automatically pick it up.
 
+In order to use ssh keys for modules create a secret with `id_rsa` key and specify it in `ProviderConfig`
+
+Here is an example how to use existing ssh keys from Flux.
+
+```yaml
+    - filename: .ssh/id_rsa
+      source: Secret
+      secretRef:
+        namespace: flux-system
+        name: flux-system
+        key: identity
+    - filename: .ssh/id_rsa.pub
+      source: Secret
+      secretRef:
+        namespace: flux-system
+        name: flux-system
+        key: identity.pub
+    - filename: .ssh/known_hosts
+      source: Secret
+      secretRef:
+        namespace: flux-system
+        name: flux-system
+        key: known_hosts
+```
+
 ## Known limitations:
 
 * You must either use remote state or ensure the provider container's `/tf`

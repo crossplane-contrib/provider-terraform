@@ -67,7 +67,7 @@ const (
 	errDestroy       = "cannot apply Terraform configuration"
 	errVarFile       = "cannot get tfvars"
 
-	gitCredentialsFilename = ".git-credentials"
+	// gitCredentialsFilename = ".git-credentials"
 )
 
 const (
@@ -103,9 +103,11 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, poll, t
 	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcTmp.Run(context.TODO())
 
+	l.Info("Creating terraform connector")
 	c := &connector{
 		kube:      mgr.GetClient(),
 		usage:     resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
+		logger:    l,
 		fs:        fs,
 		terraform: func(dir string) tfclient { return terraform.Harness{Path: tfPath, Dir: dir} },
 	}
@@ -126,8 +128,9 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, poll, t
 }
 
 type connector struct {
-	kube  client.Client
-	usage resource.Tracker
+	kube   client.Client
+	usage  resource.Tracker
+	logger logging.Logger
 
 	fs        afero.Afero
 	terraform func(dir string) tfclient
@@ -159,32 +162,40 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errGetPC)
 	}
 
+	gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
+	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
+		return nil, errors.Wrap(err, errWriteGitCreds)
+	}
+
+	c.logger.Info("downloading credential files for module", "module", cr.Spec.ForProvider.Module)
+
+	for _, cd := range pc.Spec.Credentials {
+		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+		if err != nil {
+			return nil, errors.Wrap(err, errGetCreds)
+		}
+		c.logger.Debug("processing credintial file", "file", cd.Filename)
+		credDir, credFile := filepath.Split(cd.Filename)
+		if credDir != "" {
+			if err = c.fs.MkdirAll(filepath.Clean(filepath.Join(gitCredDir, credDir)), 0700); err != nil {
+				return nil, errors.Wrap(err, errWriteCreds)
+			}
+		}
+		p := filepath.Clean(filepath.Join(gitCredDir, credDir, credFile))
+		if err := c.fs.WriteFile(p, data, 0600); err != nil {
+			return nil, errors.Wrap(err, errWriteCreds)
+		}
+	}
+
+	err := os.Setenv("GIT_CRED_DIR", gitCredDir)
+	if err != nil {
+		return nil, errors.Wrap(err, errRemoteModule)
+	}
+
+	c.logger.Info("Downloading terraform module", "module", cr.Spec.ForProvider.Module, "source", cr.Spec.ForProvider.Source)
+
 	switch cr.Spec.ForProvider.Source {
 	case v1alpha1.ModuleSourceRemote:
-		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of workspace directory
-		gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
-		if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-			return nil, errors.Wrap(err, errWriteGitCreds)
-		}
-		for _, cd := range pc.Spec.Credentials {
-			if cd.Filename != gitCredentialsFilename {
-				continue
-			}
-			data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
-			if err != nil {
-				return nil, errors.Wrap(err, errGetCreds)
-			}
-			p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
-			if err := c.fs.WriteFile(p, data, 0600); err != nil {
-				return nil, errors.Wrap(err, errWriteGitCreds)
-			}
-			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
-			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
-			if err != nil {
-				return nil, errors.Wrap(err, errRemoteModule)
-			}
-		}
-
 		client := getter.Client{
 			Src: cr.Spec.ForProvider.Module,
 			Dst: dir,
@@ -192,7 +203,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 			Mode: getter.ClientModeDir,
 		}
-		err := client.Get()
+		err = client.Get()
 		if err != nil {
 			return nil, errors.Wrap(err, errRemoteModule)
 		}
@@ -201,30 +212,19 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, errors.Wrap(err, errWriteMain)
 		}
 	}
-
-	for _, cd := range pc.Spec.Credentials {
-		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
-		if err != nil {
-			return nil, errors.Wrap(err, errGetCreds)
-		}
-		p := filepath.Clean(filepath.Join(dir, filepath.Base(cd.Filename)))
-		if err := c.fs.WriteFile(p, data, 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteCreds)
-		}
-	}
-
+	c.logger.Info("creating module configuration", "module", cr.Spec.ForProvider.Module)
 	if pc.Spec.Configuration != nil {
 		if err := c.fs.WriteFile(filepath.Join(dir, tfConfig), []byte(*pc.Spec.Configuration), 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteConfig)
 		}
 	}
-
+	c.logger.Info("running terraform init", "dir", dir)
 	tf := c.terraform(dir)
 	if err := tf.Init(ctx); err != nil {
 		return nil, errors.Wrap(err, errInit)
 	}
-	// TODO(ytsarev): cache .terraform in /tmp to speed up `terraform init` on next reconcile
 
+	// TODO(ytsarev): cache .terraform in /tmp to speed up `terraform init` on next reconcile
 	return &external{tf: tf, kube: c.kube}, errors.Wrap(tf.Workspace(ctx, meta.GetExternalName(cr)), errWorkspace)
 }
 
