@@ -66,8 +66,6 @@ const (
 	errApply         = "cannot apply Terraform configuration"
 	errDestroy       = "cannot apply Terraform configuration"
 	errVarFile       = "cannot get tfvars"
-
-	// gitCredentialsFilename = ".git-credentials"
 )
 
 const (
