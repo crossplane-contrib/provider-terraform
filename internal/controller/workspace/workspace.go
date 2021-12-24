@@ -51,21 +51,20 @@ const (
 	errGetPC        = "cannot get ProviderConfig"
 	errGetCreds     = "cannot get credentials"
 
-	errMkdir         = "cannot make Terraform configuration directory"
-	errRemoteModule  = "cannot get remote Terraform module"
-	errWriteCreds    = "cannot write Terraform credentials"
-	errWriteGitCreds = "cannot write .git-credentials to /tmp dir"
-	errWriteConfig   = "cannot write Terraform configuration " + tfConfig
-	errWriteMain     = "cannot write Terraform configuration " + tfMain
-	errInit          = "cannot initialize Terraform configuration"
-	errWorkspace     = "cannot select Terraform workspace"
-	errResources     = "cannot list Terraform resources"
-	errDiff          = "cannot diff (i.e. plan) Terraform configuration"
-	errOutputs       = "cannot list Terraform outputs"
-	errOptions       = "cannot determine Terraform options"
-	errApply         = "cannot apply Terraform configuration"
-	errDestroy       = "cannot apply Terraform configuration"
-	errVarFile       = "cannot get tfvars"
+	errMkdir        = "cannot make Terraform configuration directory"
+	errRemoteModule = "cannot get remote Terraform module"
+	errWriteCreds   = "cannot write Terraform credentials"
+	errWriteConfig  = "cannot write Terraform configuration " + tfConfig
+	errWriteMain    = "cannot write Terraform configuration " + tfMain
+	errInit         = "cannot initialize Terraform configuration"
+	errWorkspace    = "cannot select Terraform workspace"
+	errResources    = "cannot list Terraform resources"
+	errDiff         = "cannot diff (i.e. plan) Terraform configuration"
+	errOutputs      = "cannot list Terraform outputs"
+	errOptions      = "cannot determine Terraform options"
+	errApply        = "cannot apply Terraform configuration"
+	errDestroy      = "cannot apply Terraform configuration"
+	errVarFile      = "cannot get tfvars"
 )
 
 const (
@@ -162,7 +161,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
 	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-		return nil, errors.Wrap(err, errWriteGitCreds)
+		return nil, errors.Wrap(err, errWriteCreds)
 	}
 
 	c.logger.Info("downloading credential files for module", "module", cr.Spec.ForProvider.Module)
@@ -172,8 +171,10 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		if err != nil {
 			return nil, errors.Wrap(err, errGetCreds)
 		}
-		c.logger.Debug("processing credintial file", "file", cd.Filename)
+
 		credDir, credFile := filepath.Split(cd.Filename)
+		c.logger.Debug("processing credintial file", "file", credFile, "dir", credDir)
+
 		if credDir != "" {
 			if err = c.fs.MkdirAll(filepath.Clean(filepath.Join(gitCredDir, credDir)), 0700); err != nil {
 				return nil, errors.Wrap(err, errWriteCreds)
