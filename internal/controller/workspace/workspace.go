@@ -100,7 +100,7 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, poll, t
 	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcTmp.Run(context.TODO())
 
-	l.Info("Creating terraform connector")
+	l.Debug("Creating terraform connector")
 	c := &connector{
 		kube:      mgr.GetClient(),
 		usage:     resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
@@ -173,7 +173,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 
 		credDir, credFile := filepath.Split(cd.Filename)
-		c.logger.Debug("processing credintial file", "file", credFile, "dir", credDir)
+		c.logger.Debug("processing credential file", "file", credFile, "dir", credDir)
 
 		if credDir != "" {
 			if err = c.fs.MkdirAll(filepath.Clean(filepath.Join(gitCredDir, credDir)), 0700); err != nil {
@@ -202,7 +202,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 			Mode: getter.ClientModeDir,
 		}
-		err = client.Get()
+		err := client.Get()
 		if err != nil {
 			return nil, errors.Wrap(err, errRemoteModule)
 		}

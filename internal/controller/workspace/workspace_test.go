@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
@@ -104,8 +103,7 @@ func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	uid := types.UID("no-you-id")
 	tfCreds := "credentials"
-	zl := zap.New(zap.UseDevMode(true))
-	log := logging.NewLogrLogger(zl.WithName("test"))
+	log := logging.NewNopLogger()
 
 	type fields struct {
 		kube      client.Client
