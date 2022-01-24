@@ -164,7 +164,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errWriteCreds)
 	}
 
-	c.logger.Info("downloading credential files for module", "module", cr.Spec.ForProvider.Module)
+	c.logger.Debug("downloading credential files for module", "module", cr.Spec.ForProvider.Module)
 
 	for _, cd := range pc.Spec.Credentials {
 		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
@@ -191,7 +191,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errRemoteModule)
 	}
 
-	c.logger.Info("Downloading terraform module", "module", cr.Spec.ForProvider.Module, "source", cr.Spec.ForProvider.Source)
+	c.logger.Debug("Downloading terraform module", "module", cr.Spec.ForProvider.Module, "source", cr.Spec.ForProvider.Source)
 
 	switch cr.Spec.ForProvider.Source {
 	case v1alpha1.ModuleSourceRemote:
@@ -211,13 +211,13 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, errors.Wrap(err, errWriteMain)
 		}
 	}
-	c.logger.Info("creating module configuration", "module", cr.Spec.ForProvider.Module)
+	c.logger.Debug("creating module configuration", "module", cr.Spec.ForProvider.Module)
 	if pc.Spec.Configuration != nil {
 		if err := c.fs.WriteFile(filepath.Join(dir, tfConfig), []byte(*pc.Spec.Configuration), 0600); err != nil {
 			return nil, errors.Wrap(err, errWriteConfig)
 		}
 	}
-	c.logger.Info("running terraform init", "dir", dir)
+	c.logger.Debug("running terraform init", "dir", dir)
 	tf := c.terraform(dir)
 	if err := tf.Init(ctx); err != nil {
 		return nil, errors.Wrap(err, errInit)
