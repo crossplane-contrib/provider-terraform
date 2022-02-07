@@ -51,20 +51,24 @@ const (
 	errGetPC        = "cannot get ProviderConfig"
 	errGetCreds     = "cannot get credentials"
 
-	errMkdir        = "cannot make Terraform configuration directory"
-	errRemoteModule = "cannot get remote Terraform module"
-	errWriteCreds   = "cannot write Terraform credentials"
-	errWriteConfig  = "cannot write Terraform configuration " + tfConfig
-	errWriteMain    = "cannot write Terraform configuration " + tfMain
-	errInit         = "cannot initialize Terraform configuration"
-	errWorkspace    = "cannot select Terraform workspace"
-	errResources    = "cannot list Terraform resources"
-	errDiff         = "cannot diff (i.e. plan) Terraform configuration"
-	errOutputs      = "cannot list Terraform outputs"
-	errOptions      = "cannot determine Terraform options"
-	errApply        = "cannot apply Terraform configuration"
-	errDestroy      = "cannot apply Terraform configuration"
-	errVarFile      = "cannot get tfvars"
+	errMkdir               = "cannot make Terraform configuration directory"
+	errRemoteModule        = "cannot get remote Terraform module"
+	errWriteCreds          = "cannot write Terraform credentials"
+	errWriteGitCreds       = "cannot write .git-credentials to /tmp dir"
+	errWriteConfig         = "cannot write Terraform configuration " + tfConfig
+	errWriteMain           = "cannot write Terraform configuration " + tfMain
+	errInit                = "cannot initialize Terraform configuration"
+	errWorkspace           = "cannot select Terraform workspace"
+	errResources           = "cannot list Terraform resources"
+	errDiff                = "cannot diff (i.e. plan) Terraform configuration"
+	errOutputs             = "cannot list Terraform outputs"
+	errOptions             = "cannot determine Terraform options"
+	errApply               = "cannot apply Terraform configuration"
+	errDestroy             = "cannot apply Terraform configuration"
+	errVarFile             = "cannot get tfvars"
+	gitCredentialsFilename = ".git-credentials"
+	gitSSHKey              = "id_rsa"
+	gitKnownHostsFile      = "known_hosts"
 )
 
 const (
@@ -159,42 +163,38 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		return nil, errors.Wrap(err, errGetPC)
 	}
 
-	gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
-	if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
-		return nil, errors.Wrap(err, errWriteCreds)
-	}
-
-	c.logger.Debug("downloading credential files for module", "module", cr.Spec.ForProvider.Module)
-
-	for _, cd := range pc.Spec.Credentials {
-		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
-		if err != nil {
-			return nil, errors.Wrap(err, errGetCreds)
-		}
-
-		credDir, credFile := filepath.Split(cd.Filename)
-		c.logger.Debug("processing credential file", "file", credFile, "dir", credDir)
-
-		if credDir != "" {
-			if err = c.fs.MkdirAll(filepath.Clean(filepath.Join(gitCredDir, credDir)), 0700); err != nil {
-				return nil, errors.Wrap(err, errWriteCreds)
-			}
-		}
-		p := filepath.Clean(filepath.Join(gitCredDir, credDir, credFile))
-		if err := c.fs.WriteFile(p, data, 0600); err != nil {
-			return nil, errors.Wrap(err, errWriteCreds)
-		}
-	}
-
-	err := os.Setenv("GIT_CRED_DIR", gitCredDir)
-	if err != nil {
-		return nil, errors.Wrap(err, errRemoteModule)
-	}
-
 	c.logger.Debug("Downloading terraform module", "module", cr.Spec.ForProvider.Module, "source", cr.Spec.ForProvider.Source)
 
 	switch cr.Spec.ForProvider.Source {
 	case v1alpha1.ModuleSourceRemote:
+		// NOTE(ytsarev): Retrieve .git-credentials from Spec to /tmp outside of workspace directory
+		gitCredDir := filepath.Clean(filepath.Join("/tmp", dir))
+		if err := c.fs.MkdirAll(gitCredDir, 0700); err != nil {
+			return nil, errors.Wrap(err, errWriteGitCreds)
+		}
+
+		for _, cd := range pc.Spec.Credentials {
+			if cd.Filename != gitCredentialsFilename && cd.Filename != gitSSHKey && cd.Filename != gitKnownHostsFile {
+				continue
+			}
+			data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+			if err != nil {
+				return nil, errors.Wrap(err, errGetCreds)
+			}
+
+			c.logger.Debug("processing git credential file", "file", cd.Filename)
+
+			p := filepath.Clean(filepath.Join(gitCredDir, filepath.Base(cd.Filename)))
+			if err := c.fs.WriteFile(p, data, 0600); err != nil {
+				return nil, errors.Wrap(err, errWriteGitCreds)
+			}
+			// NOTE(ytsarev): Make go-getter pick up .git-credentials, see /.gitconfig in the container image
+			err = os.Setenv("GIT_CRED_DIR", gitCredDir)
+			if err != nil {
+				return nil, errors.Wrap(err, errRemoteModule)
+			}
+		}
+
 		client := getter.Client{
 			Src: cr.Spec.ForProvider.Module,
 			Dst: dir,
@@ -211,6 +211,19 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			return nil, errors.Wrap(err, errWriteMain)
 		}
 	}
+
+	for _, cd := range pc.Spec.Credentials {
+		c.logger.Debug("processing credential file", "file", cd.Filename)
+		data, err := resource.CommonCredentialExtractor(ctx, cd.Source, c.kube, cd.CommonCredentialSelectors)
+		if err != nil {
+			return nil, errors.Wrap(err, errGetCreds)
+		}
+		p := filepath.Clean(filepath.Join(dir, filepath.Base(cd.Filename)))
+		if err := c.fs.WriteFile(p, data, 0600); err != nil {
+			return nil, errors.Wrap(err, errWriteCreds)
+		}
+	}
+
 	c.logger.Debug("creating module configuration", "module", cr.Spec.ForProvider.Module)
 	if pc.Spec.Configuration != nil {
 		if err := c.fs.WriteFile(filepath.Join(dir, tfConfig), []byte(*pc.Spec.Configuration), 0600); err != nil {
