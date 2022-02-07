@@ -1,6 +1,6 @@
 # provider-terraform
 
-An __experimental__ Crossplane provider for Terraform. Use this provider to
+An **experimental** Crossplane provider for Terraform. Use this provider to
 define new Crossplane Composite Resources (XRs) that are composed of a mix of
 'native' Crossplane managed resources and your existing Terraform modules.
 
@@ -56,14 +56,14 @@ spec:
     module: https://github.com/crossplane/tf
     # Variables can be specified inline, or loaded from a ConfigMap or Secret.
     vars:
-    - key: region
-      value: us-west-1
+      - key: region
+        value: us-west-1
     varFiles:
-    - source: SecretKey
-      secretKeyRef:
-        namespace: default
-        name: terraform
-        key: example.tfvar.json
+      - source: SecretKey
+        secretKeyRef:
+          namespace: default
+          name: terraform
+          key: example.tfvar.json
   # All Terraform outputs are written to the connection secret.
   writeConnectionSecretToRef:
     namespace: default
@@ -90,13 +90,12 @@ metadata:
   name: default
 spec:
   credentials:
-  - filename: .git-credentials # use exactly this filename
-    source: Secret
-    secretRef:
-      namespace: crossplane-system
-      name: git-credentials
-      key: .git-credentials
-...
+    - filename: .git-credentials # use exactly this filename
+      source: Secret
+      secretRef:
+        namespace: crossplane-system
+        name: git-credentials
+        key: .git-credentials
 ```
 
 Standard `.git-credentials` filename is important to keep so provider-terraform
@@ -107,36 +106,36 @@ In order to use ssh keys for modules create a secret with `id_rsa` key and speci
 Here is an example how to use existing ssh keys from Flux.
 
 ```yaml
-    - filename: .ssh/id_rsa
-      source: Secret
-      secretRef:
-        namespace: flux-system
-        name: flux-system
-        key: identity
-    - filename: .ssh/id_rsa.pub
-      source: Secret
-      secretRef:
-        namespace: flux-system
-        name: flux-system
-        key: identity.pub
-    - filename: .ssh/known_hosts
-      source: Secret
-      secretRef:
-        namespace: flux-system
-        name: flux-system
-        key: known_hosts
+- filename: id_rsa
+  source: Secret
+  secretRef:
+    namespace: flux-system
+    name: flux-system
+    key: identity
+- filename: id_rsa.pub
+  source: Secret
+  secretRef:
+    namespace: flux-system
+    name: flux-system
+    key: identity.pub
+- filename: known_hosts
+  source: Secret
+  secretRef:
+    namespace: flux-system
+    name: flux-system
+    key: known_hosts
 ```
 
 ## Known limitations:
 
-* You must either use remote state or ensure the provider container's `/tf`
-  directory is not lost. `provider-terraform` __does not persist state__;
+- You must either use remote state or ensure the provider container's `/tf`
+  directory is not lost. `provider-terraform` **does not persist state**;
   consider using the [Kubernetes] remote state backend.
-* If the module takes longer than the supplied `--timeout` to apply the
+- If the module takes longer than the supplied `--timeout` to apply the
   underlying `terraform` process will be killed. You will potentially lose state
   and leak resources.
-* The provider won't emit an event until _after_ it has successfully applied the
+- The provider won't emit an event until _after_ it has successfully applied the
   Terraform module, which can take a long time.
 
-[Kubernetes]: https://www.terraform.io/docs/language/settings/backends/kubernetes.html
+[kubernetes]: https://www.terraform.io/docs/language/settings/backends/kubernetes.html
 [git credentials store]: https://git-scm.com/docs/git-credential-store
