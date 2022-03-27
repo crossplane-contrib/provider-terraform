@@ -169,6 +169,11 @@ spec:
               atProvider:
                 description: WorkspaceObservation are the observable fields of a Workspace.
                 type: object
+                properties:
+                  outputs:
+                    description: Contains the published output values from the Terraform module
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
               conditions:
                 description: Conditions of the resource.
                 items:

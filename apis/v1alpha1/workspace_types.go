@@ -113,8 +113,7 @@ type WorkspaceParameters struct {
 
 // WorkspaceObservation are the observable fields of a Workspace.
 type WorkspaceObservation struct {
-	// TODO(negz): Should we include outputs here? Or only in connection
-	// details.
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // A WorkspaceSpec defines the desired state of a Workspace.
