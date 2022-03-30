@@ -23,7 +23,8 @@ spec:
     # main.tf as opaque, inline HCL.
     source: Inline
     module: |
-      // Outputs are written to the connection secret.
+      // All outputs are written to the connection secret.  Non-sensitive outputs
+      // are stored in the status.atProvider.outputs object.
       output "url" {
         value       = google_storage_bucket.example.self_link
       }
@@ -101,6 +102,59 @@ spec:
 
 Standard `.git-credentials` filename is important to keep so provider-terraform
 controller will be able to automatically pick it up.
+
+
+## Terraform Output support
+
+Non-sensitive outputs are mapped to the status.atProvider.outputs section
+so they can be referenced by the Composition.
+Strings, numbers, booleans and tuples are directly supported as outputs.
+Objects (maps) are converted to JSON before they are stored as outputs.
+This is required because the object attributes are not specified in the Workspace
+CRD and so will be sanitized before the status is stored in the database.
+
+For example, the following terraform outputs:
+```yaml
+      output "string" {
+        value = "bar"
+        sensitive = false
+      }
+      output "number" {
+        value = 1.9
+        sensitive = false
+      }
+      output "object" {
+        value = {"a": 3, "b": 2}
+        sensitive = false
+      }
+      output "tuple" {
+        value = ["foo", "bar"]
+        sensitive = false
+      }
+      output "bool" {
+        value = false
+        sensitive = false
+      }
+      output "sensitive" {
+        value = "SENSITIVE"
+        sensitive = true
+      }
+```
+Appear in the corresponding outputs section as:
+```yaml
+  status:
+    atProvider:
+      outputs:
+        bool: false
+        number: 1.9
+        object: '{"a":3,"b":2}'
+        string: bar
+        tuple:
+        - foo
+        - bar
+```
+
+Note that the "sensitive" output is not included in the status.atProvider.outputs
 
 ## Known limitations:
 

@@ -629,7 +629,7 @@ func TestObserve(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{},
+					Outputs: map[string]interface{}{},
 				},
 			},
 		},
@@ -662,8 +662,8 @@ func TestObserve(t *testing.T) {
 					},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{
-						"string": "", // Because we JSON decode the value, which is interface{}{}
+					Outputs: map[string]interface{}{
+						"string": nil,
 					},
 				},
 			},
@@ -856,7 +856,7 @@ func TestCreate(t *testing.T) {
 					},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{
+					Outputs: map[string]interface{}{
 						"object": "null", // Because we JSON decode the value, which is interface{}{}
 					},
 				},
