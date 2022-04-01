@@ -372,20 +372,14 @@ func op2cd(o []terraform.Output) managed.ConnectionDetails {
 // workspace_type.Workspace.
 func generateWorkspaceObservation(op []terraform.Output) v1alpha1.WorkspaceObservation {
 	wo := v1alpha1.WorkspaceObservation{
-		Outputs: make(map[string]interface{}),
+		Outputs: make(map[string]string, len(op)),
 	}
 	for _, o := range op {
 		if !o.Sensitive {
-			// Objects must be converted to JSON since they cannot be stored without
-			// proper schema definitions in the CRD.
-			if o.Type == terraform.OutputTypeObject {
-				if j, err := o.JSONValue(); err != nil {
-					wo.Outputs[o.Name] = "Failed to marshal object"
-				} else {
-					wo.Outputs[o.Name] = string(j)
-				}
-			} else {
-				wo.Outputs[o.Name] = o.Value()
+			if o.Type == terraform.OutputTypeString {
+				wo.Outputs[o.Name] = o.StringValue()
+			} else if j, err := o.JSONValue(); err == nil {
+				wo.Outputs[o.Name] = string(j)
 			}
 		}
 	}

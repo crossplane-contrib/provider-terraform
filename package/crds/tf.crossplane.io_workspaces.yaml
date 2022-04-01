@@ -170,7 +170,8 @@ spec:
                 description: WorkspaceObservation are the observable fields of a Workspace.
                 properties:
                   outputs:
-                    additionalProperties: true
+                    additionalProperties:
+                      type: string
                     type: object
                 type: object
               conditions:

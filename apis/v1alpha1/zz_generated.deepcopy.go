@@ -325,7 +325,7 @@ func (in *WorkspaceObservation) DeepCopyInto(out *WorkspaceObservation) {
 	*out = *in
 	if in.Outputs != nil {
 		in, out := &in.Outputs, &out.Outputs
-		*out = make(map[string]interface{}, len(*in))
+		*out = make(map[string]string, len(*in))
 		for key, val := range *in {
 			(*out)[key] = val
 		}
