@@ -101,7 +101,7 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, poll, t
 	gcWorkspace := workdir.NewGarbageCollector(mgr.GetClient(), tfDir, workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcWorkspace.Run(context.TODO())
 
-	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
+	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("/tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcTmp.Run(context.TODO())
 
 	l.Debug("Creating terraform connector")
@@ -153,6 +153,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	if err := c.fs.MkdirAll(dir, 0700); resource.Ignore(os.IsExist, err) != nil {
 		return nil, errors.Wrap(err, errMkdir)
 	}
+	if err := c.fs.MkdirAll(filepath.Join("/tmp", tfDir), 0700); resource.Ignore(os.IsExist, err) != nil {
+		return nil, errors.Wrap(err, errMkdir)
+	}
 
 	if err := c.usage.Track(ctx, mg); err != nil {
 		return nil, errors.Wrap(err, errTrackPCUsage)
@@ -196,7 +199,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 
 		// Workaround of https://github.com/hashicorp/go-getter/issues/114
-		if err := c.fs.Remove(dir); err != nil {
+		if err := c.fs.RemoveAll(dir); err != nil {
 			return nil, errors.Wrap(err, errRemoteModule)
 		}
 
