@@ -589,11 +589,10 @@ func TestObserve(t *testing.T) {
 			},
 		},
 		"DiffErrorDeleted": {
-			reason: "We should call the Delete function when an error is encountered while diffing the Terraform configuration on a deleted Workspace",
+			reason: "We should ignore error encountered while diffing the Terraform configuration on a deleted Workspace",
 			fields: fields{
 				tf: &MockTf{
-					MockDestroy: func(_ context.Context, _ ...terraform.Option) error { return nil },
-					MockDiff:    func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
+					MockDiff: func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
 				},
 			},
 			args: args{
@@ -604,27 +603,7 @@ func TestObserve(t *testing.T) {
 				},
 			},
 			want: want{
-				o: managed.ExternalObservation{ResourceExists: false},
-			},
-		},
-		"DiffErrorDeletedDestroyError": {
-			reason: "We should raise an error when the Delete function fails after Diff fails on a deleted resource",
-			fields: fields{
-				tf: &MockTf{
-					MockDestroy: func(_ context.Context, _ ...terraform.Option) error { return errBoom },
-					MockDiff:    func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
-				},
-			},
-			args: args{
-				mg: &v1alpha1.Workspace{
-					ObjectMeta: metav1.ObjectMeta{
-						DeletionTimestamp: &now,
-					},
-				},
-			},
-			want: want{
-				o:   managed.ExternalObservation{},
-				err: errors.Wrap(errors.Wrap(errBoom, errDestroy), errDiff),
+				o: managed.ExternalObservation{},
 			},
 		},
 		"ResourcesError": {

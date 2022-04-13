@@ -275,11 +275,8 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
 	differs, err := c.tf.Diff(ctx, o...)
 	if err != nil {
-		if meta.WasDeleted(mg) {
-			if derr := c.Delete(ctx, mg); derr != nil {
-				return managed.ExternalObservation{}, errors.Wrap(derr, errDiff)
-			}
-			return managed.ExternalObservation{ResourceExists: false}, nil
+		if meta.WasDeleted(cr) {
+			return managed.ExternalObservation{}, nil
 		}
 		return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
 	}
