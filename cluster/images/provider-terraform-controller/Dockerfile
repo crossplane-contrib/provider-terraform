@@ -17,6 +17,8 @@ RUN apk update && apk add --no-cache gcc musl-dev python3-dev libffi-dev openssl
 
 RUN pip install  --no-cache-dir --upgrade pip && pip install  --no-cache-dir  azure-cli
 
+# Below pwsh installation steps taken from https://github.com/PowerShell/PowerShell-Docker/blob/master/release/preview/alpine312/docker/Dockerfile
+# TODO: Remove PowerShell completely - it is not required anymore
 # Define Args for the needed to add the package
 ARG PS_VERSION=7.0.0-preview.1
 ARG PS_PACKAGE=powershell-${PS_VERSION}-linux-alpine-x64.tar.gz
