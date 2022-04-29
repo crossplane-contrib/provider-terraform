@@ -481,7 +481,7 @@ func TestObserve(t *testing.T) {
 
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -699,7 +699,7 @@ func TestCreate(t *testing.T) {
 
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -893,7 +893,7 @@ func TestDelete(t *testing.T) {
 
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -989,7 +989,9 @@ func TestDelete(t *testing.T) {
 					MockDestroy: func(_ context.Context, _ ...terraform.Option) error { return nil },
 				},
 				kube: &test.MockClient{
-					MockGet: test.NewMockGetFn(nil),
+					MockDelete: test.NewMockDeleteFn(nil),
+					MockGet:    test.NewMockGetFn(nil),
+					MockList:   test.NewMockListFn(nil),
 				},
 			},
 			args: args{
