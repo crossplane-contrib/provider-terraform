@@ -262,9 +262,6 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
 	differs, err := c.tf.Diff(ctx, o...)
 	if err != nil {
-		if meta.WasDeleted(cr) {
-			return managed.ExternalObservation{}, nil
-		}
 		return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
 	}
 
@@ -335,31 +332,7 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	}
 
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.DestroyArgs))
-	if err := c.tf.Destroy(ctx, o...); err != nil {
-		return errors.Wrap(err, errDestroy)
-	}
-	labels := map[string]string{"tfstate": "true", "tfstateWorkspace": cr.Name}
-	sl := &corev1.SecretList{}
-	if err := c.kube.List(ctx, sl, client.MatchingLabels(labels)); err != nil {
-		return errors.Wrap(err, errListSecrets)
-	}
-	for s := range sl.Items {
-		sec := sl.Items[s]
-		if err := c.kube.Delete(ctx, &sec); err != nil {
-			return errors.Wrap(err, errDeleteSecret)
-		}
-	}
-	ll := &coordv1.LeaseList{}
-	if err := c.kube.List(ctx, ll, client.MatchingLabels(labels)); err != nil {
-		return errors.Wrap(err, errListLeases)
-	}
-	for l := range ll.Items {
-		ls := ll.Items[l]
-		if err := c.kube.Delete(ctx, &ls); err != nil {
-			return errors.Wrap(err, errDeleteLease)
-		}
-	}
-	return nil
+	return errors.Wrap(c.tf.Destroy(ctx, o...), errDestroy)
 }
 
 func (c *external) options(ctx context.Context, p v1alpha1.WorkspaceParameters) ([]terraform.Option, error) {
