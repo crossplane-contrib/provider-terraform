@@ -604,7 +604,7 @@ func TestObserve(t *testing.T) {
 				},
 			},
 			want: want{
-				o: managed.ExternalObservation{},
+				o: managed.ExternalObservation{ResourceExists: false},
 			},
 		},
 		"DiffErrorDeletedDestroyError": {
