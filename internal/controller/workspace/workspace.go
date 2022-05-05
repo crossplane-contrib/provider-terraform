@@ -40,10 +40,11 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
+	"github.com/hashicorp/go-getter"
+
 	"github.com/crossplane-contrib/provider-terraform/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-terraform/internal/terraform"
 	"github.com/crossplane-contrib/provider-terraform/internal/workdir"
-	getter "github.com/hashicorp/go-getter"
 )
 
 const (
@@ -67,6 +68,10 @@ const (
 	errApply               = "cannot apply Terraform configuration"
 	errDestroy             = "cannot apply Terraform configuration"
 	errVarFile             = "cannot get tfvars"
+	errListLeases          = "cannot get list of Lease objects"
+	errListSecrets         = "cannot get list of Secret objects"
+	errDeleteSecret        = "cannot delete Secret for Workspace"
+	errDeleteLease         = "cannot delete Least for Workspace"
 	gitCredentialsFilename = ".git-credentials"
 	gitSSHKey              = "id_rsa"
 	gitKnownHostsFile      = "known_hosts"
@@ -340,16 +345,24 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 	}
 	labels := map[string]string{"tfstate": "true", "tfstateWorkspace": cr.Name}
 	sl := &corev1.SecretList{}
-	_ = c.kube.List(ctx, sl, client.MatchingLabels(labels))
+	if err := c.kube.List(ctx, sl, client.MatchingLabels(labels)); err != nil {
+		return errors.Wrap(err, errListSecrets)
+	}
 	for s := range sl.Items {
 		sec := sl.Items[s]
-		_ = c.kube.Delete(ctx, &sec)
+		if err := c.kube.Delete(ctx, &sec); err != nil {
+			return errors.Wrap(err, errDeleteSecret)
+		}
 	}
 	ll := &coordv1.LeaseList{}
-	_ = c.kube.List(ctx, ll, client.MatchingLabels(labels))
+	if err := c.kube.List(ctx, ll, client.MatchingLabels(labels)); err != nil {
+		return errors.Wrap(err, errListLeases)
+	}
 	for l := range ll.Items {
 		ls := ll.Items[l]
-		_ = c.kube.Delete(ctx, &ls)
+		if err := c.kube.Delete(ctx, &ls); err != nil {
+			return errors.Wrap(err, errDeleteLease)
+		}
 	}
 	return nil
 }
