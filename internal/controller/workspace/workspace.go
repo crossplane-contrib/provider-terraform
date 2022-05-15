@@ -24,7 +24,6 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
-	coordv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
@@ -53,21 +52,22 @@ const (
 	errGetPC        = "cannot get ProviderConfig"
 	errGetCreds     = "cannot get credentials"
 
-	errMkdir         = "cannot make Terraform configuration directory"
-	errRemoteModule  = "cannot get remote Terraform module"
-	errWriteCreds    = "cannot write Terraform credentials"
-	errWriteGitCreds = "cannot write .git-credentials to /tmp dir"
-	errWriteConfig   = "cannot write Terraform configuration " + tfConfig
-	errWriteMain     = "cannot write Terraform configuration " + tfMain
-	errInit          = "cannot initialize Terraform configuration"
-	errWorkspace     = "cannot select Terraform workspace"
-	errResources     = "cannot list Terraform resources"
-	errDiff          = "cannot diff (i.e. plan) Terraform configuration"
-	errOutputs       = "cannot list Terraform outputs"
-	errOptions       = "cannot determine Terraform options"
-	errApply         = "cannot apply Terraform configuration"
-	errDestroy       = "cannot destroy Terraform configuration"
-	errVarFile       = "cannot get tfvars"
+	errMkdir           = "cannot make Terraform configuration directory"
+	errRemoteModule    = "cannot get remote Terraform module"
+	errWriteCreds      = "cannot write Terraform credentials"
+	errWriteGitCreds   = "cannot write .git-credentials to /tmp dir"
+	errWriteConfig     = "cannot write Terraform configuration " + tfConfig
+	errWriteMain       = "cannot write Terraform configuration " + tfMain
+	errInit            = "cannot initialize Terraform configuration"
+	errWorkspace       = "cannot select Terraform workspace"
+	errResources       = "cannot list Terraform resources"
+	errDiff            = "cannot diff (i.e. plan) Terraform configuration"
+	errOutputs         = "cannot list Terraform outputs"
+	errOptions         = "cannot determine Terraform options"
+	errApply           = "cannot apply Terraform configuration"
+	errDestroy         = "cannot destroy Terraform configuration"
+	errVarFile         = "cannot get tfvars"
+	errDeleteWorkspace = "cannot delete Terraform workspace"
 
 	gitCredentialsFilename = ".git-credentials"
 )
@@ -88,6 +88,7 @@ type tfclient interface {
 	Diff(ctx context.Context, o ...terraform.Option) (bool, error)
 	Apply(ctx context.Context, o ...terraform.Option) error
 	Destroy(ctx context.Context, o ...terraform.Option) error
+	DeleteCurrentWorkspace(ctx context.Context) error
 }
 
 // Setup adds a controller that reconciles Workspace managed resources.
@@ -259,20 +260,23 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
 	differs, err := c.tf.Diff(ctx, o...)
 	if err != nil {
-		if meta.WasDeleted(mg) {
-			if derr := c.Delete(ctx, mg); derr != nil {
-				return managed.ExternalObservation{}, errors.Wrap(derr, errDiff)
-			}
-			return managed.ExternalObservation{ResourceExists: false}, nil
+		if !meta.WasDeleted(mg) {
+			return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
 		}
-		return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
+		// terraform plan can fail on deleted resources, so let the reconciliation loop
+		// call Delete() if there are still resources in the tfstate file
+		differs = false
 	}
-
 	r, err := c.tf.Resources(ctx)
 	if err != nil {
 		return managed.ExternalObservation{}, errors.Wrap(err, errResources)
 	}
-
+	if meta.WasDeleted(cr) && len(r) == 0 {
+		// The CR was deleted and there are no more terraform resources so the workspace can be deleted
+		if err = c.tf.DeleteCurrentWorkspace(ctx); err != nil {
+			return managed.ExternalObservation{}, errors.Wrap(err, errDeleteWorkspace)
+		}
+	}
 	// Include any non-sensitive outputs in our status
 	op, err := c.tf.Outputs(ctx)
 
