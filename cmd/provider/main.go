@@ -27,8 +27,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 
-	"github.com/crossplane-contrib/provider-terraform/apis"
-	"github.com/crossplane-contrib/provider-terraform/internal/controller"
+	"github.com/el-mail/provider-terraform/apis"
+	"github.com/el-mail/provider-terraform/internal/controller"
 )
 
 func main() {

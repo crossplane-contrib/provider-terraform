@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crossplane-contrib/provider-terraform/apis/v1alpha1"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
+	"github.com/el-mail/provider-terraform/apis/v1alpha1"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/controller-runtime/pkg/client"

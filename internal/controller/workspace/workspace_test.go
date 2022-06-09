@@ -35,8 +35,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 
-	"github.com/crossplane-contrib/provider-terraform/apis/v1alpha1"
-	"github.com/crossplane-contrib/provider-terraform/internal/terraform"
+	"github.com/el-mail/provider-terraform/apis/v1alpha1"
+	"github.com/el-mail/provider-terraform/internal/terraform"
 )
 
 type ErrFs struct {
