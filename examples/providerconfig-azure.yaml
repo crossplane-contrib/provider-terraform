@@ -1,0 +1,31 @@
+apiVersion: tf.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: azure
+spec:
+  credentials:
+  - filename: azure-creds.json
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: azure-creds
+      key: credentials
+  configuration: |
+      locals {
+        local_data = jsondecode(file("${path.module}/azure-creds.json"))
+      }
+      provider "azurerm" {
+        features {}
+
+        subscription_id   = local.local_data.subscriptionId
+        tenant_id         = local.local_data.tenantId
+        client_id         = local.local_data.clientId
+        client_secret     = local.local_data.clientSecret
+      }
+      terraform {
+        backend "kubernetes" {
+          secret_suffix     = "providerconfig-crossplane-terraform"
+          namespace         = "crossplane-system"
+          in_cluster_config = true
+        }
+      }
