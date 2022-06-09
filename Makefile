@@ -1,7 +1,7 @@
 # ====================================================================================
 # Setup Project
 PROJECT_NAME := provider-terraform
-PROJECT_REPO := github.com/crossplane-contrib/$(PROJECT_NAME)
+PROJECT_REPO := github.com/el-mail/$(PROJECT_NAME)
 
 PLATFORMS ?= linux_amd64 linux_arm64
 -include build/makelib/common.mk
@@ -66,9 +66,9 @@ dev: $(KIND) $(KUBECTL)
 	@$(KUBECTL) cluster-info --context kind-$(PROJECT_NAME)-dev
 	@$(INFO) Installing Crossplane CRDs
 	@$(KUBECTL) apply -k https://github.com/crossplane/crossplane//cluster?ref=master
-	@$(INFO) Installing Provider SQL CRDs
+	@$(INFO) Installing Provider Terraform CRDs
 	@$(KUBECTL) apply -R -f package/crds
-	@$(INFO) Starting Provider SQL controllers
+	@$(INFO) Starting Provider Terraform controllers
 	@$(GO) run cmd/provider/main.go --debug
 
 dev-clean: $(KIND) $(KUBECTL)
