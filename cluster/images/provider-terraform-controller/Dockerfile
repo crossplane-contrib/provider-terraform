@@ -12,9 +12,8 @@ RUN \
   pip --no-cache-dir install azure-cli && \
   apk del --purge build
 
-ADD .gitconfig /home/${USER_ID}/.gitconfig
-
 ADD provider /usr/local/bin/crossplane-terraform-provider
+ADD .gitconfig .gitconfig
 
 RUN mkdir /.azure && \
     chgrp -R 0 /.azure && \
