@@ -19,6 +19,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/crossplane/crossplane-runtime/pkg/controller"
+	"github.com/crossplane/crossplane-runtime/pkg/feature"
+
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -28,17 +34,20 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/ratelimiter"
 
 	"github.com/el-mail/provider-terraform/apis"
-	"github.com/el-mail/provider-terraform/internal/controller"
+	terraform "github.com/el-mail/provider-terraform/internal/controller"
 )
 
 func main() {
 	var (
 		app            = kingpin.New(filepath.Base(os.Args[0]), "Terraform support for Crossplane.").DefaultEnvars()
 		debug          = app.Flag("debug", "Run with debug logging.").Short('d').Bool()
-		syncInterval   = app.Flag("sync", "Sync interval controls how often all resources will be double checked for drift.").Short('s').Default("1h").Duration()
-		pollInterval   = app.Flag("poll", "Poll interval controls how often an individual resource should be checked for drift.").Default("1m").Duration()
-		timeout        = app.Flag("timeout", "Controls how long Terraform processes may run before they are killed.").Default("20m").Duration()
 		leaderElection = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").OverrideDefaultFromEnvar("LEADER_ELECTION").Bool()
+
+		syncInterval     = app.Flag("sync", "How often all resources will be double-checked for drift from the desired state.").Short('s').Default("1h").Duration()
+		pollInterval     = app.Flag("poll", "How often individual resources will be checked for drift from the desired state").Default("1m").Duration()
+		maxReconcileRate = app.Flag("max-reconcile-rate", "The global maximum rate per second at which resources may checked for drift from the desired state.").Default("10").Int()
+
+		timeout = app.Flag("timeout", "Controls how long Terraform processes may run before they are killed.").Default("20m").Duration()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -51,20 +60,37 @@ func main() {
 		ctrl.SetLogger(zl)
 	}
 
-	log.Debug("Starting", "sync-period", syncInterval.String())
-
 	cfg, err := ctrl.GetConfig()
 	kingpin.FatalIfError(err, "Cannot get API server rest config")
 
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		LeaderElection:   *leaderElection,
-		LeaderElectionID: "crossplane-leader-election-provider-terraform",
-		SyncPeriod:       syncInterval,
+	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
+		SyncPeriod: syncInterval,
+
+		// controller-runtime uses both ConfigMaps and Leases for leader
+		// election by default. Leases expire after 15 seconds, with a
+		// 10 second renewal deadline. We've observed leader loss due to
+		// renewal deadlines being exceeded when under high load - i.e.
+		// hundreds of reconciles per second and ~200rps to the API
+		// server. Switching to Leases only and longer leases appears to
+		// alleviate this.
+		LeaderElection:             *leaderElection,
+		LeaderElectionID:           "crossplane-leader-election-provider-terraform",
+		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
+		LeaseDuration:              func() *time.Duration { d := 60 * time.Second; return &d }(),
+		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
 
-	rl := ratelimiter.NewDefaultProviderRateLimiter(ratelimiter.DefaultProviderRPS)
 	kingpin.FatalIfError(apis.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(controller.Setup(mgr, log, rl, *pollInterval, *timeout), "Cannot setup terraform controllers")
+
+	o := controller.Options{
+		Logger:                  log,
+		MaxConcurrentReconciles: *maxReconcileRate,
+		PollInterval:            *pollInterval,
+		GlobalRateLimiter:       ratelimiter.NewGlobal(*maxReconcileRate),
+		Features:                &feature.Flags{},
+	}
+
+	kingpin.FatalIfError(terraform.Setup(mgr, o, *timeout), "Cannot setup terraform controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }
