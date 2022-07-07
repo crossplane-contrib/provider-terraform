@@ -317,7 +317,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	// TODO(negz): Allow Workspaces to optionally derive their readiness from an
 	// output - similar to the logic XRs use to derive readiness from a field of
 	// a composed resource.
-	mg.SetConditions(xpv1.Available())
+	cr.Status.SetConditions(xpv1.Available())
 	return managed.ExternalUpdate{ConnectionDetails: op2cd(op)}, nil
 }
 
