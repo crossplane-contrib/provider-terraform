@@ -23,6 +23,7 @@ import (
 
 	"github.com/crossplane/crossplane-runtime/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/pkg/feature"
+	"go.uber.org/zap/zapcore"
 
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
@@ -49,7 +50,7 @@ func main() {
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
-	zl := zap.New(zap.UseDevMode(*debug))
+	zl := zap.New(zap.UseDevMode(*debug), UseISO8601())
 	log := logging.NewLogrLogger(zl.WithName("provider-terraform"))
 	if *debug {
 		// The controller-runtime runs with a no-op logger by default. It is
@@ -93,4 +94,11 @@ func main() {
 
 	kingpin.FatalIfError(template.Setup(mgr, o, *timeout), "Cannot setup Template controllers")
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
+}
+
+// UseISO8601 sets the logger to use ISO8601 timestamp format
+func UseISO8601() zap.Opts {
+	return func(o *zap.Options) {
+		o.TimeEncoder = zapcore.ISO8601TimeEncoder
+	}
 }
