@@ -100,6 +100,10 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration) error 
 	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("/tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(o.Logger))
 	go gcTmp.Run(context.TODO())
 
+	cps := []managed.ConnectionPublisher{managed.NewAPISecretPublisher(mgr.GetClient(), mgr.GetScheme())}
+	// if o.Features.Enabled(features.EnableAlphaExternalSecretStores) {
+	// 	 cps = append(cps, connection.NewDetailsManager(mgr.GetClient(), apisc1alpha1.StoreConfigGroupVersionKind))
+	// }
 	c := &connector{
 		kube:      mgr.GetClient(),
 		usage:     resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1alpha1.ProviderConfigUsage{}),
@@ -113,7 +117,8 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration) error 
 		managed.WithExternalConnecter(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
-		managed.WithTimeout(timeout))
+		managed.WithTimeout(timeout),
+		managed.WithConnectionPublishers(cps...))
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(name).
