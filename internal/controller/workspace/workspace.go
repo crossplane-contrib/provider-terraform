@@ -245,26 +245,34 @@ type external struct {
 	kube client.Client
 }
 
+func (c *external) checkDiff(ctx context.Context, cr *v1alpha1.Workspace) (bool, error) {
+	o, err := c.options(ctx, cr.Spec.ForProvider)
+	if err != nil {
+		return false, errors.Wrap(err, errOptions)
+	}
+
+	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
+	differs, err := c.tf.Diff(ctx, o...)
+	if err != nil {
+		if !meta.WasDeleted(cr) {
+			return false, errors.Wrap(err, errDiff)
+		}
+		// terraform plan can fail on deleted resources, so let the reconciliation loop
+		// call Delete() if there are still resources in the tfstate file
+		differs = false
+	}
+	return differs, nil
+}
+
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
 	cr, ok := mg.(*v1alpha1.Workspace)
 	if !ok {
 		return managed.ExternalObservation{}, errors.New(errNotWorkspace)
 	}
 
-	o, err := c.options(ctx, cr.Spec.ForProvider)
-	if err != nil {
-		return managed.ExternalObservation{}, errors.Wrap(err, errOptions)
-	}
-
-	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
-	differs, err := c.tf.Diff(ctx, o...)
-	if err != nil {
-		if !meta.WasDeleted(mg) {
-			return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
-		}
-		// terraform plan can fail on deleted resources, so let the reconciliation loop
-		// call Delete() if there are still resources in the tfstate file
-		differs = false
+	differs, err := c.checkDiff(ctx, cr)
+	if !meta.WasDeleted(mg) {
+		return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
 	}
 	r, err := c.tf.Resources(ctx)
 	if err != nil {
@@ -283,6 +291,13 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.Wrap(err, errOutputs)
 	}
 	cr.Status.AtProvider = generateWorkspaceObservation(op)
+
+	if !differs {
+		// TODO(negz): Allow Workspaces to optionally derive their readiness from an
+		// output - similar to the logic XRs use to derive readiness from a field of
+		// a composed resource.
+		cr.Status.SetConditions(xpv1.Available())
+	}
 
 	return managed.ExternalObservation{
 		ResourceExists:          len(r)+len(op) > 0,
@@ -322,6 +337,9 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	// TODO(negz): Allow Workspaces to optionally derive their readiness from an
 	// output - similar to the logic XRs use to derive readiness from a field of
 	// a composed resource.
+	// Note that since Create() calls this function the Reconciler will overwrite this Available condition with Creating
+	// on the first pass and it will get reset to Available() by Observe() on the next pass if there are no differences.
+	// Leave this call for the Update() case.
 	cr.Status.SetConditions(xpv1.Available())
 	return managed.ExternalUpdate{ConnectionDetails: op2cd(op)}, nil
 }
