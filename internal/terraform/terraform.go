@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/pkg/errors"
 )
@@ -37,6 +38,9 @@ import (
 const (
 	errParse        = "cannot parse Terraform output"
 	errWriteVarFile = "cannot write tfvars file"
+	errRunCommand   = " shutdown while running terraform command"
+	errSigTerm      = "error sending SIGTERM to child process"
+	errWaitTerm     = "error waiting for child process to terminate"
 
 	errFmtInvalidConfig = "invalid Terraform configuration: found %d errors"
 
@@ -125,10 +129,10 @@ func (h Harness) Init(ctx context.Context, o ...InitOption) error {
 	}
 
 	args := append([]string{"init", "-input=false", "-no-color"}, io.args...)
-	cmd := exec.CommandContext(ctx, h.Path, args...) //nolint:gosec
+	cmd := exec.Command(h.Path, args...) //nolint:gosec
 	cmd.Dir = h.Dir
 
-	_, err := cmd.Output()
+	err := runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -454,10 +458,10 @@ func (h Harness) Apply(ctx context.Context, o ...Option) error {
 	}
 
 	args := append([]string{"apply", "-no-color", "-auto-approve", "-input=false"}, ao.args...)
-	cmd := exec.CommandContext(ctx, h.Path, args...) //nolint:gosec
+	cmd := exec.Command(h.Path, args...) //nolint:gosec
 	cmd.Dir = h.Dir
 
-	_, err := cmd.Output()
+	err := runCommand(ctx, cmd)
 	return Classify(err)
 }
 
@@ -475,9 +479,42 @@ func (h Harness) Destroy(ctx context.Context, o ...Option) error {
 	}
 
 	args := append([]string{"destroy", "-no-color", "-auto-approve", "-input=false"}, do.args...)
-	cmd := exec.CommandContext(ctx, h.Path, args...) //nolint:gosec
+	cmd := exec.Command(h.Path, args...) //nolint:gosec
 	cmd.Dir = h.Dir
 
-	_, err := cmd.Output()
+	err := runCommand(ctx, cmd)
 	return Classify(err)
+}
+
+// cmdResult represents the result of the command execution
+type cmdResult struct {
+	out []byte
+	err error
+}
+
+// runCommand executes the requested command and sends the process SIGTERM if the context finishes before the command
+func runCommand(ctx context.Context, c *exec.Cmd) error {
+	ch := make(chan cmdResult, 1)
+	go func() {
+		defer close(ch)
+		r, e := c.Output()
+		ch <- cmdResult{out: r, err: e}
+	}()
+	select {
+	case <-ctx.Done():
+		err := ctx.Err()
+		// This could be container termination or the reconciliation deadline was exceeded.  Either way send a
+		// SIGTERM to the running process and wait for either the command to finish or the process to get killed.
+		e := c.Process.Signal(syscall.SIGTERM)
+		if e != nil {
+			return errors.Wrap(errors.Wrap(e, errSigTerm), err.Error()+errRunCommand)
+		}
+		e = c.Wait()
+		if e != nil {
+			return errors.Wrap(errors.Wrap(err, errWaitTerm), err.Error()+errRunCommand)
+		}
+		return errors.Wrap(err, errRunCommand)
+	case res := <-ch:
+		return res.err
+	}
 }
