@@ -494,6 +494,10 @@ type cmdResult struct {
 
 // runCommand executes the requested command and sends the process SIGTERM if the context finishes before the command
 func runCommand(ctx context.Context, c *exec.Cmd) error {
+	// Do not run terraform command if the provider has been canceled or exceeded the timeout deadline
+	if err := ctx.Err(); err != nil {
+		return errors.Wrap(err, errRunCommand)
+	}
 	ch := make(chan cmdResult, 1)
 	go func() {
 		defer close(ch)
