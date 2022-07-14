@@ -3,7 +3,7 @@ module github.com/crossplane-contrib/provider-terraform
 go 1.17
 
 require (
-	github.com/crossplane/crossplane-runtime v0.17.0-rc.0.0.20220616115400-a520b60f1661
+	github.com/crossplane/crossplane-runtime v0.17.0
 	github.com/crossplane/crossplane-tools v0.0.0-20220310165030-1f43fc12793e
 	github.com/google/go-cmp v0.5.6
 	github.com/google/uuid v1.1.2
