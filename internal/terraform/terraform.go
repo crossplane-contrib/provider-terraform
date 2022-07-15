@@ -39,6 +39,8 @@ const (
 	errWriteVarFile = "cannot write tfvars file"
 
 	errFmtInvalidConfig = "invalid Terraform configuration: found %d errors"
+
+	tfDefault = "default"
 )
 
 const varFilePrefix = "crossplane-provider-terraform-"
@@ -105,6 +107,13 @@ type InitOption func(o *initOptions)
 func FromModule(module string) InitOption {
 	return func(o *initOptions) {
 		o.args = append(o.args, "-from-module="+module)
+	}
+}
+
+// WithInitArgs supplies a list of Terraform argument.
+func WithInitArgs(v []string) InitOption {
+	return func(o *initOptions) {
+		o.args = append(o.args, v...)
 	}
 }
 
@@ -178,6 +187,37 @@ func (h Harness) Workspace(ctx context.Context, name string) error {
 	return Classify(err)
 }
 
+// DeleteCurrentWorkspace deletes the current Terraform workspace if it is not the default.
+func (h Harness) DeleteCurrentWorkspace(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, h.Path, "workspace", "show", "-no-color") //nolint:gosec
+	cmd.Dir = h.Dir
+
+	n, err := cmd.Output()
+	if err != nil {
+		return Classify(err)
+	}
+	name := strings.TrimSuffix(string(n), "\n")
+	if name == tfDefault {
+		return nil
+	}
+
+	// Switch to the default workspace
+	err = h.Workspace(ctx, tfDefault)
+	if err != nil {
+		return Classify(err)
+	}
+	cmd = exec.CommandContext(ctx, h.Path, "workspace", "delete", "-no-color", name) //nolint:gosec
+	cmd.Dir = h.Dir
+
+	_, err = cmd.Output()
+	if err == nil {
+		// We successfully deleted the workspace; we're done.
+		return nil
+	}
+	// TODO(bobh66) The working directory could be deleted here instead of waiting for GC to clean it up
+	return Classify(err)
+}
+
 // An OutputType of Terraform.
 type OutputType int
 
@@ -215,6 +255,11 @@ type Output struct {
 	Type      OutputType
 
 	value interface{}
+}
+
+// Value returns the output's actual value.
+func (o Output) Value() interface{} {
+	return o.value
 }
 
 // StringValue returns the output's value as a string. It should only be used
@@ -328,6 +373,13 @@ type options struct {
 // An Option affects how a Terraform is invoked.
 type Option func(o *options)
 
+// WithArgs supplies a list of Terraform argument.
+func WithArgs(v []string) Option {
+	return func(o *options) {
+		o.args = append(o.args, v...)
+	}
+}
+
 // WithVar supplies a Terraform variable.
 func WithVar(k, v string) Option {
 	return func(o *options) {
@@ -373,7 +425,7 @@ func (h Harness) Diff(ctx context.Context, o ...Option) (bool, error) {
 		}
 	}
 
-	args := append([]string{"plan", "-no-color", "-input=false", "-detailed-exitcode"}, ao.args...)
+	args := append([]string{"plan", "-no-color", "-input=false", "-detailed-exitcode", "-lock=false"}, ao.args...)
 	cmd := exec.CommandContext(ctx, h.Path, args...) //nolint:gosec
 	cmd.Dir = h.Dir
 

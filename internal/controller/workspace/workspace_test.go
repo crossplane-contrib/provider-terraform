@@ -62,13 +62,14 @@ func (e *ErrFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, e
 }
 
 type MockTf struct {
-	MockInit      func(ctx context.Context, o ...terraform.InitOption) error
-	MockWorkspace func(ctx context.Context, name string) error
-	MockOutputs   func(ctx context.Context) ([]terraform.Output, error)
-	MockResources func(ctx context.Context) ([]string, error)
-	MockDiff      func(ctx context.Context, o ...terraform.Option) (bool, error)
-	MockApply     func(ctx context.Context, o ...terraform.Option) error
-	MockDestroy   func(ctx context.Context, o ...terraform.Option) error
+	MockInit                   func(ctx context.Context, o ...terraform.InitOption) error
+	MockWorkspace              func(ctx context.Context, name string) error
+	MockOutputs                func(ctx context.Context) ([]terraform.Output, error)
+	MockResources              func(ctx context.Context) ([]string, error)
+	MockDiff                   func(ctx context.Context, o ...terraform.Option) (bool, error)
+	MockApply                  func(ctx context.Context, o ...terraform.Option) error
+	MockDestroy                func(ctx context.Context, o ...terraform.Option) error
+	MockDeleteCurrentWorkspace func(ctx context.Context) error
 }
 
 func (tf *MockTf) Init(ctx context.Context, o ...terraform.InitOption) error {
@@ -97,6 +98,10 @@ func (tf *MockTf) Apply(ctx context.Context, o ...terraform.Option) error {
 
 func (tf *MockTf) Destroy(ctx context.Context, o ...terraform.Option) error {
 	return tf.MockDestroy(ctx, o...)
+}
+
+func (tf *MockTf) DeleteCurrentWorkspace(ctx context.Context) error {
+	return tf.MockDeleteCurrentWorkspace(ctx)
 }
 
 func TestConnect(t *testing.T) {
@@ -449,6 +454,9 @@ func TestConnect(t *testing.T) {
 				mg: &v1alpha1.Workspace{
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1alpha1.WorkspaceSpec{
+						ForProvider: v1alpha1.WorkspaceParameters{
+							InitArgs: []string{"-upgrade=true"},
+						},
 						ResourceSpec: xpv1.ResourceSpec{
 							ProviderConfigReference: &xpv1.Reference{},
 						},
@@ -478,10 +486,10 @@ func TestConnect(t *testing.T) {
 
 func TestObserve(t *testing.T) {
 	errBoom := errors.New("boom")
-
+	now := metav1.Now()
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -491,6 +499,7 @@ func TestObserve(t *testing.T) {
 
 	type want struct {
 		o   managed.ExternalObservation
+		wo  v1alpha1.WorkspaceObservation
 		err error
 	}
 
@@ -583,6 +592,83 @@ func TestObserve(t *testing.T) {
 				err: errors.Wrap(errBoom, errDiff),
 			},
 		},
+		"DiffErrorDeletedWithExistingResources": {
+			reason: "We should return ResourceUpToDate true when resource is deleted and there are existing resources but terraform plan fails",
+			fields: fields{
+				tf: &MockTf{
+					MockDiff:    func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
+					MockOutputs: func(ctx context.Context) ([]terraform.Output, error) { return nil, nil },
+					MockResources: func(ctx context.Context) ([]string, error) {
+						return []string{"cool_resource.very"}, nil
+					},
+				},
+			},
+			args: args{
+				mg: &v1alpha1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: &now,
+					},
+				},
+			},
+			want: want{
+				o: managed.ExternalObservation{
+					ResourceExists:    true,
+					ResourceUpToDate:  true,
+					ConnectionDetails: managed.ConnectionDetails{},
+				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{},
+				},
+			},
+		},
+		"DiffErrorDeletedWithoutExistingResources": {
+			reason: "We should return ResourceUpToDate true when resource is deleted and there are no existing resources and terraform plan fails",
+			fields: fields{
+				tf: &MockTf{
+					MockDiff:                   func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
+					MockOutputs:                func(ctx context.Context) ([]terraform.Output, error) { return nil, nil },
+					MockResources:              func(ctx context.Context) ([]string, error) { return nil, nil },
+					MockDeleteCurrentWorkspace: func(ctx context.Context) error { return nil },
+				},
+			},
+			args: args{
+				mg: &v1alpha1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: &now,
+					},
+				},
+			},
+			want: want{
+				o: managed.ExternalObservation{
+					ResourceExists:    false,
+					ResourceUpToDate:  true,
+					ConnectionDetails: managed.ConnectionDetails{},
+				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{},
+				},
+			},
+		},
+		"DiffErrorDeletedWithoutExistingResourcesWorkspaceDeleteError": {
+			reason: "We should return ResourceUpToDate true when resource is deleted and there are no existing resources and terraform plan fails",
+			fields: fields{
+				tf: &MockTf{
+					MockDiff:                   func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, errBoom },
+					MockResources:              func(ctx context.Context) ([]string, error) { return nil, nil },
+					MockDeleteCurrentWorkspace: func(ctx context.Context) error { return errBoom },
+				},
+			},
+			args: args{
+				mg: &v1alpha1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{
+						DeletionTimestamp: &now,
+					},
+				},
+			},
+			want: want{
+				err: errors.Wrap(errBoom, errDeleteWorkspace),
+			},
+		},
 		"ResourcesError": {
 			reason: "We should return any error encountered while listing extant Terraform resources",
 			fields: fields{
@@ -632,6 +718,9 @@ func TestObserve(t *testing.T) {
 					ResourceUpToDate:  true,
 					ConnectionDetails: managed.ConnectionDetails{},
 				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{},
+				},
 			},
 		},
 		"WorkspaceExists": {
@@ -644,14 +733,20 @@ func TestObserve(t *testing.T) {
 					},
 					MockOutputs: func(ctx context.Context) ([]terraform.Output, error) {
 						return []terraform.Output{
-							{Name: "string", Type: terraform.OutputTypeString},
-							{Name: "object", Type: terraform.OutputTypeObject},
+							{Name: "string", Type: terraform.OutputTypeString, Sensitive: false},
+							{Name: "object", Type: terraform.OutputTypeObject, Sensitive: true},
 						}, nil
 					},
 				},
 			},
 			args: args{
-				mg: &v1alpha1.Workspace{},
+				mg: &v1alpha1.Workspace{
+					Spec: v1alpha1.WorkspaceSpec{
+						ForProvider: v1alpha1.WorkspaceParameters{
+							PlanArgs: []string{"-refresh=false"},
+						},
+					},
+				},
 			},
 			want: want{
 				o: managed.ExternalObservation{
@@ -660,6 +755,52 @@ func TestObserve(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{
 						"string": {},
 						"object": []byte("null"), // Because we JSON decode the the value, which is interface{}{}
+					},
+				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{
+						"string": "",
+					},
+				},
+			},
+		},
+		"WorkspaceExistsOnlyOutputs": {
+			reason: "A workspace with only outputs and no resources should set ResourceExists to true",
+			fields: fields{
+				tf: &MockTf{
+					MockDiff: func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, nil },
+					MockResources: func(ctx context.Context) ([]string, error) {
+						return nil, nil
+					},
+					MockOutputs: func(ctx context.Context) ([]terraform.Output, error) {
+						return []terraform.Output{
+							{Name: "string", Type: terraform.OutputTypeString, Sensitive: false},
+							{Name: "object", Type: terraform.OutputTypeObject, Sensitive: true},
+						}, nil
+					},
+				},
+			},
+			args: args{
+				mg: &v1alpha1.Workspace{
+					Spec: v1alpha1.WorkspaceSpec{
+						ForProvider: v1alpha1.WorkspaceParameters{
+							PlanArgs: []string{"-refresh=false"},
+						},
+					},
+				},
+			},
+			want: want{
+				o: managed.ExternalObservation{
+					ResourceExists:   true,
+					ResourceUpToDate: true,
+					ConnectionDetails: managed.ConnectionDetails{
+						"string": {},
+						"object": []byte("null"), // Because we JSON decode the the value, which is interface{}{}
+					},
+				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{
+						"string": "",
 					},
 				},
 			},
@@ -676,6 +817,11 @@ func TestObserve(t *testing.T) {
 			if diff := cmp.Diff(tc.want.o, got); diff != "" {
 				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
+			if tc.args.mg != nil {
+				if diff := cmp.Diff(tc.want.wo, tc.args.mg.(*v1alpha1.Workspace).Status.AtProvider); diff != "" {
+					t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+				}
+			}
 		})
 	}
 }
@@ -685,7 +831,7 @@ func TestCreate(t *testing.T) {
 
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -695,6 +841,7 @@ func TestCreate(t *testing.T) {
 
 	type want struct {
 		c   managed.ExternalCreation
+		wo  v1alpha1.WorkspaceObservation
 		err error
 	}
 
@@ -809,8 +956,8 @@ func TestCreate(t *testing.T) {
 					MockApply: func(_ context.Context, _ ...terraform.Option) error { return nil },
 					MockOutputs: func(ctx context.Context) ([]terraform.Output, error) {
 						return []terraform.Output{
-							{Name: "string", Type: terraform.OutputTypeString},
-							{Name: "object", Type: terraform.OutputTypeObject},
+							{Name: "string", Type: terraform.OutputTypeString, Sensitive: true},
+							{Name: "object", Type: terraform.OutputTypeObject, Sensitive: false},
 						}, nil
 					},
 				},
@@ -822,7 +969,8 @@ func TestCreate(t *testing.T) {
 				mg: &v1alpha1.Workspace{
 					Spec: v1alpha1.WorkspaceSpec{
 						ForProvider: v1alpha1.WorkspaceParameters{
-							Vars: []v1alpha1.Var{{Key: "super", Value: "cool"}},
+							ApplyArgs: []string{"-refresh=false"},
+							Vars:      []v1alpha1.Var{{Key: "super", Value: "cool"}},
 							VarFiles: []v1alpha1.VarFile{
 								{
 									Source:                v1alpha1.VarFileSourceConfigMapKey,
@@ -831,7 +979,7 @@ func TestCreate(t *testing.T) {
 								{
 									Source:             v1alpha1.VarFileSourceSecretKey,
 									SecretKeyReference: &v1alpha1.KeyReference{},
-									Format:             v1alpha1.VarFileFormatJSON,
+									Format:             &v1alpha1.VarFileFormatJSON,
 								},
 							},
 						},
@@ -842,7 +990,12 @@ func TestCreate(t *testing.T) {
 				c: managed.ExternalCreation{
 					ConnectionDetails: managed.ConnectionDetails{
 						"string": {},
-						"object": []byte("null"), // Because we JSON decode the the value, which is interface{}{}
+						"object": []byte("null"), // Because we JSON decode the value, which is interface{}{}
+					},
+				},
+				wo: v1alpha1.WorkspaceObservation{
+					Outputs: map[string]string{
+						"object": "null",
 					},
 				},
 			},
@@ -859,6 +1012,11 @@ func TestCreate(t *testing.T) {
 			if diff := cmp.Diff(tc.want.c, got); diff != "" {
 				t.Errorf("\n%s\ne.Create(...): -want, +got:\n%s\n", tc.reason, diff)
 			}
+			if tc.args.mg != nil {
+				if diff := cmp.Diff(tc.want.wo, tc.args.mg.(*v1alpha1.Workspace).Status.AtProvider); diff != "" {
+					t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
+				}
+			}
 		})
 	}
 }
@@ -868,7 +1026,7 @@ func TestDelete(t *testing.T) {
 
 	type fields struct {
 		tf   tfclient
-		kube client.Reader
+		kube client.Client
 	}
 
 	type args struct {
@@ -955,7 +1113,7 @@ func TestDelete(t *testing.T) {
 			args: args{
 				mg: &v1alpha1.Workspace{},
 			},
-			want: errors.Wrap(errBoom, errApply),
+			want: errors.Wrap(errBoom, errDestroy),
 		},
 		"Success": {
 			reason: "We should not return an error if we successfully destroy the Terraform configuration",
@@ -971,7 +1129,8 @@ func TestDelete(t *testing.T) {
 				mg: &v1alpha1.Workspace{
 					Spec: v1alpha1.WorkspaceSpec{
 						ForProvider: v1alpha1.WorkspaceParameters{
-							Vars: []v1alpha1.Var{{Key: "super", Value: "cool"}},
+							DestroyArgs: []string{"-refresh=false"},
+							Vars:        []v1alpha1.Var{{Key: "super", Value: "cool"}},
 							VarFiles: []v1alpha1.VarFile{
 								{
 									Source:                v1alpha1.VarFileSourceConfigMapKey,
@@ -980,7 +1139,7 @@ func TestDelete(t *testing.T) {
 								{
 									Source:             v1alpha1.VarFileSourceSecretKey,
 									SecretKeyReference: &v1alpha1.KeyReference{},
-									Format:             v1alpha1.VarFileFormatJSON,
+									Format:             &v1alpha1.VarFileFormatJSON,
 								},
 							},
 						},

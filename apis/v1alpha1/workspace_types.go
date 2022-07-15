@@ -17,9 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // A Var represents a Terraform configuration variable.
@@ -43,7 +42,7 @@ const (
 type VarFileFormat string
 
 // Vars file formats.
-const (
+var (
 	VarFileFormatHCL  VarFileFormat = "HCL"
 	VarFileFormatJSON VarFileFormat = "JSON"
 )
@@ -55,7 +54,8 @@ type VarFile struct {
 
 	// Format of this vars file.
 	// +kubebuilder:default=HCL
-	Format VarFileFormat `json:"format"`
+	// +optional
+	Format *VarFileFormat `json:"format,omitempty"`
 
 	// A ConfigMap key containing the vars file.
 	// +optional
@@ -108,12 +108,23 @@ type WorkspaceParameters struct {
 	// precedence.
 	// +optional
 	VarFiles []VarFile `json:"varFiles,omitempty"`
+
+	// Arguments to be included in the terraform init CLI command
+	InitArgs []string `json:"initArgs,omitempty"`
+
+	// Arguments to be included in the terraform plan CLI command
+	PlanArgs []string `json:"planArgs,omitempty"`
+
+	// Arguments to be included in the terraform apply CLI command
+	ApplyArgs []string `json:"applyArgs,omitempty"`
+
+	// Arguments to be included in the terraform destroy CLI command
+	DestroyArgs []string `json:"destroyArgs,omitempty"`
 }
 
 // WorkspaceObservation are the observable fields of a Workspace.
 type WorkspaceObservation struct {
-	// TODO(negz): Should we include outputs here? Or only in connection
-	// details.
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // A WorkspaceSpec defines the desired state of a Workspace.
@@ -132,6 +143,8 @@ type WorkspaceStatus struct {
 
 // A Workspace of Terraform Configuration.
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="SYNCED",type="string",JSONPath=".status.conditions[?(@.type=='Synced')].status"
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:resource:scope=Cluster
 type Workspace struct {

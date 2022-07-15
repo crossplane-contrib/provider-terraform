@@ -39,10 +39,11 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 
+	"github.com/hashicorp/go-getter"
+
 	"github.com/crossplane-contrib/provider-terraform/apis/v1alpha1"
 	"github.com/crossplane-contrib/provider-terraform/internal/terraform"
 	"github.com/crossplane-contrib/provider-terraform/internal/workdir"
-	getter "github.com/hashicorp/go-getter"
 )
 
 const (
@@ -51,21 +52,23 @@ const (
 	errGetPC        = "cannot get ProviderConfig"
 	errGetCreds     = "cannot get credentials"
 
-	errMkdir               = "cannot make Terraform configuration directory"
-	errRemoteModule        = "cannot get remote Terraform module"
-	errWriteCreds          = "cannot write Terraform credentials"
-	errWriteGitCreds       = "cannot write .git-credentials to /tmp dir"
-	errWriteConfig         = "cannot write Terraform configuration " + tfConfig
-	errWriteMain           = "cannot write Terraform configuration " + tfMain
-	errInit                = "cannot initialize Terraform configuration"
-	errWorkspace           = "cannot select Terraform workspace"
-	errResources           = "cannot list Terraform resources"
-	errDiff                = "cannot diff (i.e. plan) Terraform configuration"
-	errOutputs             = "cannot list Terraform outputs"
-	errOptions             = "cannot determine Terraform options"
-	errApply               = "cannot apply Terraform configuration"
-	errDestroy             = "cannot apply Terraform configuration"
-	errVarFile             = "cannot get tfvars"
+	errMkdir           = "cannot make Terraform configuration directory"
+	errRemoteModule    = "cannot get remote Terraform module"
+	errWriteCreds      = "cannot write Terraform credentials"
+	errWriteGitCreds   = "cannot write .git-credentials to /tmp dir"
+	errWriteConfig     = "cannot write Terraform configuration " + tfConfig
+	errWriteMain       = "cannot write Terraform configuration " + tfMain
+	errInit            = "cannot initialize Terraform configuration"
+	errWorkspace       = "cannot select Terraform workspace"
+	errResources       = "cannot list Terraform resources"
+	errDiff            = "cannot diff (i.e. plan) Terraform configuration"
+	errOutputs         = "cannot list Terraform outputs"
+	errOptions         = "cannot determine Terraform options"
+	errApply           = "cannot apply Terraform configuration"
+	errDestroy         = "cannot destroy Terraform configuration"
+	errVarFile         = "cannot get tfvars"
+	errDeleteWorkspace = "cannot delete Terraform workspace"
+
 	gitCredentialsFilename = ".git-credentials"
 	gitSSHKey              = "id_rsa"
 	gitKnownHostsFile      = "known_hosts"
@@ -87,6 +90,7 @@ type tfclient interface {
 	Diff(ctx context.Context, o ...terraform.Option) (bool, error)
 	Apply(ctx context.Context, o ...terraform.Option) error
 	Destroy(ctx context.Context, o ...terraform.Option) error
+	DeleteCurrentWorkspace(ctx context.Context) error
 }
 
 // Setup adds a controller that reconciles Workspace managed resources.
@@ -101,7 +105,7 @@ func Setup(mgr ctrl.Manager, l logging.Logger, rl workqueue.RateLimiter, poll, t
 	gcWorkspace := workdir.NewGarbageCollector(mgr.GetClient(), tfDir, workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcWorkspace.Run(context.TODO())
 
-	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
+	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("/tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(l))
 	go gcTmp.Run(context.TODO())
 
 	l.Debug("Creating terraform connector")
@@ -153,6 +157,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	if err := c.fs.MkdirAll(dir, 0700); resource.Ignore(os.IsExist, err) != nil {
 		return nil, errors.Wrap(err, errMkdir)
 	}
+	if err := c.fs.MkdirAll(filepath.Join("/tmp", tfDir), 0700); resource.Ignore(os.IsExist, err) != nil {
+		return nil, errors.Wrap(err, errMkdir)
+	}
 
 	if err := c.usage.Track(ctx, mg); err != nil {
 		return nil, errors.Wrap(err, errTrackPCUsage)
@@ -195,6 +202,11 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			}
 		}
 
+		// Workaround of https://github.com/hashicorp/go-getter/issues/114
+		if err := c.fs.RemoveAll(dir); err != nil {
+			return nil, errors.Wrap(err, errRemoteModule)
+		}
+
 		client := getter.Client{
 			Src: cr.Spec.ForProvider.Module,
 			Dst: dir,
@@ -232,7 +244,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	}
 	c.logger.Debug("running terraform init", "dir", dir)
 	tf := c.terraform(dir)
-	if err := tf.Init(ctx); err != nil {
+	o := make([]terraform.InitOption, 0, len(cr.Spec.ForProvider.InitArgs))
+	o = append(o, terraform.WithInitArgs(cr.Spec.ForProvider.InitArgs))
+	if err := tf.Init(ctx, o...); err != nil {
 		return nil, errors.Wrap(err, errInit)
 	}
 
@@ -242,7 +256,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 type external struct {
 	tf   tfclient
-	kube client.Reader
+	kube client.Client
 }
 
 func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.ExternalObservation, error) {
@@ -256,24 +270,36 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.Wrap(err, errOptions)
 	}
 
+	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.PlanArgs))
 	differs, err := c.tf.Diff(ctx, o...)
 	if err != nil {
-		return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
+		if !meta.WasDeleted(mg) {
+			return managed.ExternalObservation{}, errors.Wrap(err, errDiff)
+		}
+		// terraform plan can fail on deleted resources, so let the reconciliation loop
+		// call Delete() if there are still resources in the tfstate file
+		differs = false
 	}
-
 	r, err := c.tf.Resources(ctx)
 	if err != nil {
 		return managed.ExternalObservation{}, errors.Wrap(err, errResources)
 	}
-
-	// TODO(negz): Include any non-sensitive outputs in our status?
+	if meta.WasDeleted(cr) && len(r) == 0 {
+		// The CR was deleted and there are no more terraform resources so the workspace can be deleted
+		if err = c.tf.DeleteCurrentWorkspace(ctx); err != nil {
+			return managed.ExternalObservation{}, errors.Wrap(err, errDeleteWorkspace)
+		}
+	}
+	// Include any non-sensitive outputs in our status
 	op, err := c.tf.Outputs(ctx)
+
 	if err != nil {
 		return managed.ExternalObservation{}, errors.Wrap(err, errOutputs)
 	}
+	cr.Status.AtProvider = generateWorkspaceObservation(op)
 
 	return managed.ExternalObservation{
-		ResourceExists:          len(r) > 0,
+		ResourceExists:          len(r)+len(op) > 0,
 		ResourceUpToDate:        !differs,
 		ResourceLateInitialized: false,
 		ConnectionDetails:       op2cd(op),
@@ -297,6 +323,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 		return managed.ExternalUpdate{}, errors.Wrap(err, errOptions)
 	}
 
+	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.ApplyArgs))
 	if err := c.tf.Apply(ctx, o...); err != nil {
 		return managed.ExternalUpdate{}, errors.Wrap(err, errApply)
 	}
@@ -305,7 +332,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	if err != nil {
 		return managed.ExternalUpdate{}, errors.Wrap(err, errOutputs)
 	}
-
+	cr.Status.AtProvider = generateWorkspaceObservation(op)
 	// TODO(negz): Allow Workspaces to optionally derive their readiness from an
 	// output - similar to the logic XRs use to derive readiness from a field of
 	// a composed resource.
@@ -324,11 +351,12 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) error {
 		return errors.Wrap(err, errOptions)
 	}
 
+	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.DestroyArgs))
 	return errors.Wrap(c.tf.Destroy(ctx, o...), errDestroy)
 }
 
 func (c *external) options(ctx context.Context, p v1alpha1.WorkspaceParameters) ([]terraform.Option, error) {
-	o := make([]terraform.Option, 0, len(p.Vars)+len(p.VarFiles))
+	o := make([]terraform.Option, 0, len(p.Vars)+len(p.VarFiles)+len(p.DestroyArgs)+len(p.ApplyArgs)+len(p.PlanArgs))
 
 	for _, v := range p.Vars {
 		o = append(o, terraform.WithVar(v.Key, v.Value))
@@ -336,7 +364,7 @@ func (c *external) options(ctx context.Context, p v1alpha1.WorkspaceParameters) 
 
 	for _, vf := range p.VarFiles {
 		fmt := terraform.HCL
-		if vf.Format == v1alpha1.VarFileFormatJSON {
+		if vf.Format == &v1alpha1.VarFileFormatJSON {
 			fmt = terraform.JSON
 		}
 
@@ -376,4 +404,22 @@ func op2cd(o []terraform.Output) managed.ConnectionDetails {
 		}
 	}
 	return cd
+}
+
+// generateWorkspaceObservation is used to produce v1alpha1.WorkspaceObservation from
+// workspace_type.Workspace.
+func generateWorkspaceObservation(op []terraform.Output) v1alpha1.WorkspaceObservation {
+	wo := v1alpha1.WorkspaceObservation{
+		Outputs: make(map[string]string, len(op)),
+	}
+	for _, o := range op {
+		if !o.Sensitive {
+			if o.Type == terraform.OutputTypeString {
+				wo.Outputs[o.Name] = o.StringValue()
+			} else if j, err := o.JSONValue(); err == nil {
+				wo.Outputs[o.Name] = string(j)
+			}
+		}
+	}
+	return wo
 }
