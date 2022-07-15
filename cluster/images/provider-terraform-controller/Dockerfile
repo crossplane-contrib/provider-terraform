@@ -5,14 +5,14 @@ ARG TINI_VERSION
 
 ADD provider /usr/local/bin/crossplane-terraform-provider
 
+# As of Crossplane v1.3.0 provider controllers run as UID 2000.
+# https://github.com/crossplane/crossplane/blob/v1.3.0/internal/controller/pkg/revision/deployment.go#L32
 RUN addgroup -g 2000 controller && \
     adduser -D -u 2000 -G controller  controller
 
 ADD .gitconfig /home/controller/.gitconfig
 ADD ssh_config /home/controller/.ssh/config
 
-# As of Crossplane v1.3.0 provider controllers run as UID 2000.
-# https://github.com/crossplane/crossplane/blob/v1.3.0/internal/controller/pkg/revision/deployment.go#L32
 RUN mkdir /tf
 
 RUN chown controller:controller /tf && \
