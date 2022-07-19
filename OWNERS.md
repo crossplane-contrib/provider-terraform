@@ -13,3 +13,4 @@ guidelines and responsibilities for the steering committee and maintainers.
 * Bob Haddleton <bob.haddleton@nokia.com> ([bobh66](https://github.com/bobh66))
 * Yury Tsarev <yury@upbound.io> ([ytsarev](https://github.com/ytsarev))
 * Nic Cope <negz@upbound.io> ([negz](https://github.com/negz))
+* Vladimir Glafirov <vglafirov@gmail.com> ([vglafirov](https://github.com/vglafirov))
