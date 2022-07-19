@@ -1,6 +1,6 @@
 # provider-terraform
 
-An **experimental** Crossplane provider for Terraform. Use this provider to
+An __experimental__ Crossplane provider for Terraform. Use this provider to
 define new Crossplane Composite Resources (XRs) that are composed of a mix of
 'native' Crossplane managed resources and your existing Terraform modules.
 
@@ -57,14 +57,14 @@ spec:
     module: https://github.com/crossplane/tf
     # Variables can be specified inline, or loaded from a ConfigMap or Secret.
     vars:
-      - key: region
-        value: us-west-1
+    - key: region
+      value: us-west-1
     varFiles:
-      - source: SecretKey
-        secretKeyRef:
-          namespace: default
-          name: terraform
-          key: example.tfvar.json
+    - source: SecretKey
+      secretKeyRef:
+        namespace: default
+        name: terraform
+        key: example.tfvar.json
   # All Terraform outputs are written to the connection secret.
   writeConnectionSecretToRef:
     namespace: default
@@ -101,12 +101,13 @@ metadata:
   name: default
 spec:
   credentials:
-    - filename: .git-credentials # use exactly this filename
-      source: Secret
-      secretRef:
-        namespace: crossplane-system
-        name: git-credentials
-        key: .git-credentials
+  - filename: .git-credentials # use exactly this filename
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: git-credentials
+      key: .git-credentials
+...
 ```
 
 Standard `.git-credentials` filename is important to keep so provider-terraform
@@ -237,14 +238,14 @@ applyArgs, destroyArgs and planArgs will be added to these default arguments.
 
 ## Known limitations:
 
-- You must either use remote state or ensure the provider container's `/tf`
-  directory is not lost. `provider-terraform` **does not persist state**;
+* You must either use remote state or ensure the provider container's `/tf`
+  directory is not lost. `provider-terraform` __does not persist state__;
   consider using the [Kubernetes] remote state backend.
-- If the module takes longer than the supplied `--timeout` to apply the
+* If the module takes longer than the supplied `--timeout` to apply the
   underlying `terraform` process will be killed. You will potentially lose state
   and leak resources.
-- The provider won't emit an event until _after_ it has successfully applied the
+* The provider won't emit an event until _after_ it has successfully applied the
   Terraform module, which can take a long time.
 
-[kubernetes]: https://www.terraform.io/docs/language/settings/backends/kubernetes.html
+[Kubernetes]: https://www.terraform.io/docs/language/settings/backends/kubernetes.html
 [git credentials store]: https://git-scm.com/docs/git-credential-store
