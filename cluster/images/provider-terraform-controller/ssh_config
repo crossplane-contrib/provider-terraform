@@ -1,0 +1,3 @@
+Host *
+    IdentityFile ${GIT_CRED_DIR}/id_rsa
+    UserKnownHostsFile ${GIT_CRED_DIR}/known_hosts

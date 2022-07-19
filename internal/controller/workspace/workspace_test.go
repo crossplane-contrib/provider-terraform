@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
@@ -107,10 +108,12 @@ func TestConnect(t *testing.T) {
 	errBoom := errors.New("boom")
 	uid := types.UID("no-you-id")
 	tfCreds := "credentials"
+	log := logging.NewNopLogger()
 
 	type fields struct {
 		kube      client.Client
 		usage     resource.Tracker
+		logger    logging.Logger
 		fs        afero.Afero
 		terraform func(dir string) tfclient
 	}
@@ -202,8 +205,9 @@ func TestConnect(t *testing.T) {
 						return nil
 					}),
 				},
-				usage: resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
-				fs:    afero.Afero{Fs: afero.NewMemMapFs()},
+				usage:  resource.TrackerFn(func(_ context.Context, _ resource.Managed) error { return nil }),
+				logger: log,
+				fs:     afero.Afero{Fs: afero.NewMemMapFs()},
 				terraform: func(_ string) tfclient {
 					return &MockTf{
 						MockInit: func(ctx context.Context, o ...terraform.InitOption) error { return nil },
@@ -468,6 +472,7 @@ func TestConnect(t *testing.T) {
 			c := connector{
 				kube:      tc.fields.kube,
 				usage:     tc.fields.usage,
+				logger:    log,
 				fs:        tc.fields.fs,
 				terraform: tc.fields.terraform,
 			}
