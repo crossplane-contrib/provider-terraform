@@ -67,7 +67,7 @@ dev-clean: $(KIND) $(KUBECTL)
 	@$(INFO) Deleting kind cluster
 	@$(KIND) delete cluster --name=$(PROJECT_NAME)-dev
 
-.PHONY: reviewable submodules fallthrough test-integration run crds.clean dev dev-clean
+.PHONY: reviewable submodules fallthrough test-integration run dev dev-clean
 
 # ====================================================================================
 # Special Targets
