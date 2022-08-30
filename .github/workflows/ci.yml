@@ -47,6 +47,11 @@ jobs:
         with:
           submodules: true
 
+      - name: Setup Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Find the Go Build Cache
         id: go
         run: echo "::set-output name=cache::$(go env GOCACHE)"
