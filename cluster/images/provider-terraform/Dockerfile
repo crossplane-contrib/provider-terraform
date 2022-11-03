@@ -1,4 +1,4 @@
-FROM hashicorp/terraform:1.2.3
+FROM hashicorp/terraform:1.3.3
 
 ARG TARGETOS
 ARG TARGETARCH
