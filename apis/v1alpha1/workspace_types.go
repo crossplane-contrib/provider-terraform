@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
+	extensionV1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -129,7 +130,7 @@ type WorkspaceParameters struct {
 
 // WorkspaceObservation are the observable fields of a Workspace.
 type WorkspaceObservation struct {
-	Outputs map[string]string `json:"outputs,omitempty"`
+	Outputs map[string]extensionV1.JSON `json:"outputs,omitempty"`
 }
 
 // A WorkspaceSpec defines the desired state of a Workspace.

@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	extensionsV1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
@@ -786,7 +788,7 @@ func TestObserve(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{},
+					Outputs: map[string]extensionsV1.JSON{},
 				},
 			},
 		},
@@ -814,7 +816,7 @@ func TestObserve(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{},
+					Outputs: map[string]extensionsV1.JSON{},
 				},
 			},
 		},
@@ -888,7 +890,7 @@ func TestObserve(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{},
+					Outputs: map[string]extensionsV1.JSON{},
 				},
 			},
 		},
@@ -927,8 +929,8 @@ func TestObserve(t *testing.T) {
 					},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{
-						"string": "",
+					Outputs: map[string]extensionsV1.JSON{
+						"string": {Raw: []byte("null")},
 					},
 				},
 			},
@@ -964,13 +966,12 @@ func TestObserve(t *testing.T) {
 					ResourceUpToDate: true,
 					ConnectionDetails: managed.ConnectionDetails{
 						"string": {},
-						"object": []byte("null"), // Because we JSON decode the the value, which is interface{}{}
+						"object": []byte("null"), // Because we JSON decode the value, which is interface{}{}
 					},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{
-						"string": "",
-					},
+					Outputs: map[string]extensionsV1.JSON{
+						"string": {Raw: []byte("null")}},
 				},
 			},
 		},
@@ -1163,8 +1164,8 @@ func TestCreate(t *testing.T) {
 					},
 				},
 				wo: v1alpha1.WorkspaceObservation{
-					Outputs: map[string]string{
-						"object": "null",
+					Outputs: map[string]extensionsV1.JSON{
+						"object": {Raw: []byte("null")},
 					},
 				},
 			},
