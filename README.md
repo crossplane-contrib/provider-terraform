@@ -24,7 +24,7 @@ spec:
     source: Inline
     module: |
       // All outputs are written to the connection secret.  Non-sensitive outputs
-      // are stored as string values in the status.atProvider.outputs object.
+      // are stored in the status.atProvider.outputs object.
       output "url" {
         value       = google_storage_bucket.example.self_link
       }
@@ -123,15 +123,11 @@ controller will be able to automatically pick it up.
 ## Terraform Output support
 
 Non-sensitive outputs are mapped to the status.atProvider.outputs section
-as strings so they can be referenced by the Composition.
+so they can be referenced by the Composition.
 Strings, numbers and booleans can be referenced directly in Compositions
 and can be used in the _convert_ transform if type conversion is needed.
-Tuple and object outputs will be available in the corresponding JSON form.
-This is required because undefined object attributes are not specified in the Workspace
-CRD and so will be sanitized before the status is stored in the database.
-
-That means that any output values required for use in the Composition must be published
-explicitly and individually, and they cannot be referenced inside a tuple or object.
+Tuple and object outputs will be available. Objects that have nested objects will not have
+the nest object available.
 
 For example, the following terraform outputs:
 ```yaml
@@ -144,12 +140,13 @@ For example, the following terraform outputs:
         sensitive = false
       }
       output "object" {
-        // This will be a JSON string - the key/value pairs are not accessible
-        value = {"a": 3, "b": 2}
+        // This will be an object.
+        //  a and b will be available c will not since its a nested object
+        value = {"a": 3, "b": 2, "c": {"1": "one"}}
         sensitive = false
       }
       output "tuple" {
-        // This will be a JSON string - the elements will not be accessible
+        // This will be an array
         value = ["foo", "bar"]
         sensitive = false
       }
