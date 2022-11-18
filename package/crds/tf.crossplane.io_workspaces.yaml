@@ -359,6 +359,8 @@ spec:
                   outputs:
                     additionalProperties:
                       x-kubernetes-preserve-unknown-fields: true
+                      additionalProperties:
+                        x-kubernetes-preserve-unknown-fields: true
                     type: object
                 type: object
               conditions:
