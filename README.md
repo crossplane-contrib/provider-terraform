@@ -1,3 +1,9 @@
+# 🚨 PLEASE NOTE 🚨: This repository is no longer maintained.
+
+# New users: Use its successor [Official Upbound Terraform Provider](https://github.com/upbound/provider-terraform) instead.
+# Existing users: Follow the migration guide [here](https://github.com/upbound/provider-terraform/blob/main/docs/MigrationGuide.md).
+
+---
 # provider-terraform
 
 An __experimental__ Crossplane provider for Terraform. Use this provider to
