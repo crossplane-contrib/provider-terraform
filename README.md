@@ -3,6 +3,9 @@
 # New users: Use its successor [Official Upbound Terraform Provider](https://github.com/upbound/provider-terraform) instead.
 # Existing users: Follow the migration guide [here](https://github.com/upbound/provider-terraform/blob/main/docs/MigrationGuide.md).
 
+This repository will receive bugfix-only critical changes until the end of
+transition period on 1st of Feb 2023.
+
 ---
 # provider-terraform
 
