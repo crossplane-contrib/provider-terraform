@@ -13,6 +13,6 @@ kind: Provider
 metadata:
   name: crossplane-provider-terraform
 spec:
-  package: crossplanecontrib/provider-terraform:v0.5.0
+  package: crossplanecontrib/provider-terraform:v0.6.0
   controllerConfigRef:
     name: terraform-config
