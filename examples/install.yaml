@@ -6,7 +6,6 @@ metadata:
   labels:
     app: crossplane-provider-terraform
 spec:
-  image: crossplanecontrib/provider-terraform-controller:v0.5.0
   args: ["-d"]
 ---
 apiVersion: pkg.crossplane.io/v1
