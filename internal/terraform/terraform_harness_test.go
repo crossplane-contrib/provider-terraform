@@ -25,6 +25,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -32,6 +34,26 @@ import (
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 )
+
+// This is an extension to test.EquateErrors, that treats errors as equal if one is a substring of another.
+// We need this to write assertions on terraform CLI errors wrapped by Classify()
+func errorContainsSubstring() cmp.Option {
+	return cmp.Comparer(func(a, b error) bool {
+		if a == nil || b == nil {
+			return a == nil && b == nil
+		}
+
+		av := reflect.ValueOf(a)
+		bv := reflect.ValueOf(b)
+		if av.Type() != bv.Type() {
+			return false
+		}
+
+		as := a.Error()
+		bs := b.Error()
+		return strings.Contains(as, bs) || strings.Contains(bs, as)
+	})
+}
 
 // Terraform binary to invoke.
 var tfBinaryPath = func() string {
@@ -401,9 +423,9 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 				ctx: context.Background(),
 			},
 			want: want{
-				init:  errors.New("module not found"),
-				diff:  errors.New("no configuration files"),
-				apply: errors.New("no configuration files"),
+				init:  errors.New("Module not found"),
+				diff:  errors.New("No configuration files"),
+				apply: errors.New("No configuration files"),
 				// Apparently destroy 'works' in this situation ¯\_(ツ)_/¯
 			},
 		},
@@ -424,7 +446,7 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 				o:   []Option{WithVar("boop", "doop!")},
 			},
 			want: want{
-				destroy: errors.New("value for undeclared variable"),
+				destroy: errors.New("Value for undeclared variable"),
 			},
 		},
 	}
@@ -442,13 +464,14 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 			tf := Harness{Path: tfBinaryPath, Dir: dir, UsePluginCache: false}
 
 			err = tf.Init(tc.initArgs.ctx, tc.initArgs.o...)
-			if diff := cmp.Diff(tc.want.init, err, test.EquateErrors()); diff != "" {
+			//if diff := cmp.Diff(tc.want.init, err, test.EquateErrors()); diff != "" {
+			if diff := cmp.Diff(tc.want.init, err, errorContainsSubstring()); diff != "" {
 				t.Errorf("\n%s\ntf.Init(...): -want error, +got error:\n%s", tc.reason, diff)
 			}
 
 			differs, err := tf.Diff(tc.diffArgs.ctx, tc.diffArgs.o...)
 			t.Logf("Want %t, got %t", tc.want.differsBeforeApply, differs)
-			if diff := cmp.Diff(tc.want.diff, err, test.EquateErrors()); diff != "" {
+			if diff := cmp.Diff(tc.want.diff, err, errorContainsSubstring()); diff != "" {
 				t.Errorf("\n%s\ntf.Diff(...): -want error, +got error (before apply):\n%s", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want.differsBeforeApply, differs); diff != "" {
@@ -456,12 +479,12 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 			}
 
 			err = tf.Apply(tc.applyArgs.ctx, tc.applyArgs.o...)
-			if diff := cmp.Diff(tc.want.apply, err, test.EquateErrors()); diff != "" {
+			if diff := cmp.Diff(tc.want.apply, err, errorContainsSubstring()); diff != "" {
 				t.Errorf("\n%s\ntf.Apply(...): -want error, +got error:\n%s", tc.reason, diff)
 			}
 
 			differs, err = tf.Diff(tc.diffArgs.ctx, tc.diffArgs.o...)
-			if diff := cmp.Diff(tc.want.diff, err, test.EquateErrors()); diff != "" {
+			if diff := cmp.Diff(tc.want.diff, err, errorContainsSubstring()); diff != "" {
 				t.Errorf("\n%s\ntf.Diff(...): -want error, +got error (after apply):\n%s", tc.reason, diff)
 			}
 			if diff := cmp.Diff(tc.want.differsAfterApply, differs); diff != "" {
@@ -469,7 +492,7 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 			}
 
 			err = tf.Destroy(tc.destroyArgs.ctx, tc.destroyArgs.o...)
-			if diff := cmp.Diff(tc.want.destroy, err, test.EquateErrors()); diff != "" {
+			if diff := cmp.Diff(tc.want.destroy, err, errorContainsSubstring()); diff != "" {
 				t.Errorf("\n%s\ntf.Destroy(...): -want error, +got error:\n%s", tc.reason, diff)
 			}
 		})
