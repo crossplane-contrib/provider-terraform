@@ -499,6 +499,96 @@ func TestInitDiffApplyDestroy(t *testing.T) {
 	}
 }
 
+func TestApplyThenPlanAgain(t *testing.T) {
+	type initArgs struct {
+		ctx context.Context
+		o   []InitOption
+	}
+	type args struct {
+		ctx context.Context
+		o   []Option
+	}
+	type want struct {
+		init    error
+		apply   error
+		plan    error
+		destroy error
+
+		planOutput PlanOutput
+	}
+
+	cases := map[string]struct {
+		reason      string
+		initArgs    initArgs
+		applyArgs   args
+		planArgs    args
+		destroyArgs args
+		want        want
+	}{
+		"Simple": {
+			reason: "It should be possible to initialize a simple Terraform module, then apply with one variable, and plan with another",
+			initArgs: initArgs{
+				ctx: context.Background(),
+				o:   []InitOption{FromModule(filepath.Join(tfTestDataPath(), "nullmodule"))},
+			},
+			applyArgs: args{
+				ctx: context.Background(),
+				o:   []Option{WithVar("coolness", "extreme")},
+			},
+			planArgs: args{
+				ctx: context.Background(),
+				o:   []Option{WithVar("coolness", "azaza")},
+			},
+			destroyArgs: args{
+				ctx: context.Background(),
+				o:   []Option{WithVar("coolness", "extreme")},
+			},
+			want: want{
+				planOutput: PlanOutput{
+					Changes: []PlannedChange{
+						{Address: "null_resource.test", Actions: []string{"delete", "create"}},
+						{Address: "random_id.test", Actions: []string{"no-op"}},
+					},
+				},
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "provider-terraform-test")
+			if err != nil {
+				t.Fatalf("Cannot create temporary directory: %v", err)
+			}
+			defer os.RemoveAll(dir)
+
+			tf := Harness{Path: tfBinaryPath, Dir: dir, UsePluginCache: false}
+
+			err = tf.Init(tc.initArgs.ctx, tc.initArgs.o...)
+			if diff := cmp.Diff(tc.want.init, err, errorContainsSubstring()); diff != "" {
+				t.Errorf("\n%s\ntf.Init(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+
+			err = tf.Apply(tc.applyArgs.ctx, tc.applyArgs.o...)
+			if diff := cmp.Diff(tc.want.apply, err, errorContainsSubstring()); diff != "" {
+				t.Errorf("\n%s\ntf.Apply(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+
+			planOutput, err := tf.Plan(tc.planArgs.ctx, tc.planArgs.o...)
+			if diff := cmp.Diff(tc.want.plan, err, errorContainsSubstring()); diff != "" {
+				t.Errorf("\n%s\ntf.Plan(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.planOutput, planOutput, cmp.AllowUnexported(PlanOutput{})); diff != "" {
+				t.Errorf("\n%s\ntf.Plan(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+
+			err = tf.Destroy(tc.destroyArgs.ctx, tc.destroyArgs.o...)
+			if diff := cmp.Diff(tc.want.destroy, err, errorContainsSubstring()); diff != "" {
+				t.Errorf("\n%s\ntf.Destroy(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
 func TestGenerateChecksum(t *testing.T) {
 	type want struct {
 		output string

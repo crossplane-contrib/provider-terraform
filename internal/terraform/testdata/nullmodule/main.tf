@@ -31,5 +31,6 @@ resource "random_id" "test" {
 resource "null_resource" "test" {
   triggers = {
     trigger = random_id.test.hex
+    coolness = var.coolness
   }
 }

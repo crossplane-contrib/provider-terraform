@@ -586,6 +586,132 @@ func (h Harness) Diff(ctx context.Context, o ...Option) (bool, error) {
 	return false, Classify(err)
 }
 
+type PlanOutput struct {
+	Changes []PlannedChange
+}
+
+type PlannedChange struct {
+	Address string
+	Actions []string
+}
+
+func (p PlanOutput) HasChanges() bool {
+	return len(p.Changes) > 0
+}
+
+func (h Harness) Plan(ctx context.Context, o ...Option) (PlanOutput, error) {
+	ao := &options{}
+	for _, fn := range o {
+		fn(ao)
+	}
+
+	for _, vf := range ao.varFiles {
+		if err := os.WriteFile(filepath.Join(h.Dir, vf.filename), vf.data, 0600); err != nil {
+			return PlanOutput{}, errors.Wrap(err, errWriteVarFile)
+		}
+	}
+
+	planFile := "terraform.tfplan"
+	defer os.Remove(filepath.Join(h.Dir, planFile))
+
+	args := append(
+		[]string{
+			"plan",
+			"-no-color",
+			"-input=false",
+			"-detailed-exitcode",
+			"-lock=false",
+			"-out", planFile,
+		},
+		ao.args...,
+	)
+	cmd := exec.Command(h.Path, args...) //nolint:gosec
+	cmd.Dir = h.Dir
+	if len(h.Envs) > 0 {
+		cmd.Env = append(os.Environ(), h.Envs...)
+	}
+
+	// Note: the terraform lock is not used (see the -lock=false flag above) and the rwmutex is
+	// intentionally not locked here to avoid excessive blocking. See
+	// https://github.com/upbound/provider-terraform/issues/239#issuecomment-1921732682
+
+	// The -detailed-exitcode flag will make terraform plan return:
+	// 0 - Succeeded, diff is empty (no changes)
+	// 1 - Errored
+	// 2 - Succeeded, there is a diff
+	out, err := runCommand(ctx, cmd)
+	switch cmd.ProcessState.ExitCode() {
+	case 0:
+		if h.EnableTerraformCLILogging {
+			h.Logger.Info(string(out), "operation", "plan")
+		}
+		return PlanOutput{}, nil
+
+	case 2:
+		if h.EnableTerraformCLILogging {
+			h.Logger.Info(string(out), "operation", "plan")
+		}
+		// There are changes, show the plan to get details
+		return h.showPlan(ctx, "terraform.tfplan")
+
+	default:
+		ee := &exec.ExitError{}
+		errors.As(err, &ee)
+		if h.EnableTerraformCLILogging {
+			h.Logger.Info(string(ee.Stderr), "operation", "apply")
+		}
+	}
+	return PlanOutput{}, Classify(err)
+}
+
+func (h Harness) showPlan(ctx context.Context, planFile string) (PlanOutput, error) {
+	cmd := exec.Command(h.Path, "show", "-json", planFile) //nolint:gosec
+	cmd.Dir = h.Dir
+	if len(h.Envs) > 0 {
+		cmd.Env = append(os.Environ(), h.Envs...)
+	}
+
+	// Terraform lock is not used here.
+
+	out, err := runCommand(ctx, cmd)
+	if err != nil {
+		return PlanOutput{}, Classify(err)
+	}
+
+	// Define a structure to hold the terraform plan JSON output
+	var planData map[string]any
+	if jerr := json.Unmarshal(out, &planData); jerr != nil {
+		return PlanOutput{}, errors.Wrap(jerr, errParse)
+	}
+
+	// Parse the plan data to extract changes
+	var changes []PlannedChange
+	if resourceChanges, ok := planData["resource_changes"].([]any); ok {
+		for _, rc := range resourceChanges {
+			if change, ok := rc.(map[string]any); ok {
+				if address, ok := change["address"].(string); ok {
+					if changeDetails, ok := change["change"].(map[string]any); ok {
+						var actions []string
+						if actionsList, ok := changeDetails["actions"].([]any); ok {
+							for _, action := range actionsList {
+								if actionStr, ok := action.(string); ok {
+									actions = append(actions, actionStr)
+								}
+							}
+						}
+						changes = append(changes, PlannedChange{
+							Address: address,
+							Actions: actions,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return PlanOutput{Changes: changes}, nil
+}
+
 // Apply a Terraform configuration.
 func (h Harness) Apply(ctx context.Context, o ...Option) error {
 	ao := &options{}
