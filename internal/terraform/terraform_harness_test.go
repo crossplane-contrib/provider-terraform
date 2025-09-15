@@ -515,7 +515,7 @@ func TestGenerateChecksum(t *testing.T) {
 			module: "testdata/outputmodule",
 			ctx:    context.Background(),
 			want: want{
-				output: "d41d8cd98f00b204e9800998ecf8427e",
+				output: "21a2798521953aff7a169e1e4c87e595",
 			},
 		},
 	}
