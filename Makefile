@@ -25,16 +25,14 @@ GO111MODULE = on
 # Setup Kubernetes tools
 
 KIND_VERSION = v0.30.0
-UP_VERSION = v0.34.2
-UP_CHANNEL = stable
-UPTEST_VERSION = v2.0.1
+UPTEST_VERSION = v2.2.0
 KUSTOMIZE_VERSION = v5.3.0
 YQ_VERSION = v4.40.5
-CROSSPLANE_VERSION = 1.17.1
 CRDDIFF_VERSION = v0.12.1
+CROSSPLANE_VERSION = 2.0.2
+CROSSPLANE_CLI_VERSION = v2.0.2
 
-export UP_VERSION := $(UP_VERSION)
-export UP_CHANNEL := $(UP_CHANNEL)
+export CROSSPLANE_CLI_VERSION := $(CROSSPLANE_CLI_VERSION)
 
 -include build/makelib/k8s_tools.mk
 
@@ -82,7 +80,7 @@ xpkg.build.provider-terraform: do.build.images
 # NOTE(hasheddan): we must ensure up is installed in tool cache prior to build
 # as including the k8s_tools machinery prior to the xpkg machinery sets UP to
 # point to tool cache.
-build.init: $(UP)
+build.init: $(CROSSPLANE_CLI)
 
 # This is for running out-of-cluster locally, and is for convenience. Running
 # this make target will print out the command which was used. For more control,
