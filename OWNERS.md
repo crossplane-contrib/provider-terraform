@@ -11,5 +11,7 @@ organization](https://github.com/upbound/) will list their repository maintainer
 * Nic Cope <negz@upbound.io> ([negz](https://github.com/negz))
 * Sergen Yalcin <sergen@upbound.io> ([sergenyalcin](https://github.com/sergenyalcin))
 * Fatih Turken <fatih@upbound.io> ([turkenf](https://github.com/turkenf))
+* Alper Ulucinar <alper@upbound.io> ([ulucinar](https://github.com/ulucinar))
+* Erhan Cagirici <erhan@upbound.io> ([erhancagirici](https://github.com/erhancagirici))
 
 See [CODEOWNERS](./CODEOWNERS) for automatic PR assignment.
