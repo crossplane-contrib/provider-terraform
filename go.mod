@@ -1,6 +1,6 @@
 module github.com/upbound/provider-terraform
 
-go 1.24.6
+go 1.24.10
 
 require (
 	github.com/MakeNowJust/heredoc v1.0.0
