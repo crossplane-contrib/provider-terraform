@@ -185,7 +185,7 @@ spec:
 ```
 
 **Benefits:**
-- 98.6% reduction in network traffic per workspace (7.2GB/day → 50MB/day)
+- Significant network reduction (example: 50MB module at 10-min poll = 7.2GB/day → 50MB/day, 98.6% savings)
 - Faster reconciliation after initial download
 - Module automatically re-downloaded if URL changes
 

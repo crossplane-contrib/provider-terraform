@@ -4,11 +4,14 @@ This guide explains how to use the `remotePullPolicy` feature to control when pr
 
 ## Overview
 
-By default, provider-terraform downloads remote Terraform modules on every reconciliation. For workspaces that reconcile frequently (every 1-10 minutes), this can result in substantial network egress costs:
+By default, provider-terraform downloads remote Terraform modules on every reconciliation. For workspaces that reconcile frequently (every 1-10 minutes), this can result in substantial network egress costs.
 
-- **Without pull policy control**: A 50MB module reconciling 6 times per hour = 300MB/hour = 7.2GB/day per workspace
-- **With IfNotPresent policy**: Same module downloads once = 50MB/day per workspace
-- **Network reduction**: 98.6% savings per workspace
+**Example scenario** (50MB module, 10-minute poll interval):
+- **Without pull policy control**: 50MB module × 6 reconciliations/hour × 24 hours = 7.2GB/day per workspace
+- **With IfNotPresent policy**: 50MB (single download) = 50MB/day per workspace
+- **Network reduction**: 98.6% savings in this scenario
+
+*Actual savings depend on your module size and reconciliation frequency.*
 
 The `remotePullPolicy` field gives you control over when modules are downloaded, allowing you to optimize for either cost or freshness.
 
@@ -66,7 +69,7 @@ spec:
 
 **Network impact:**
 - Downloads once on first reconciliation
-- 98.6% network reduction per workspace
+- Significant network reduction (up to 98%+ depending on module size and poll interval)
 - Faster reconciliation (no download time)
 
 **Automatic re-download triggers:**

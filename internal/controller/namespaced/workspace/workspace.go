@@ -278,9 +278,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		// Pull remote source if needed
 		if shouldPull {
 			gc := getter.Client{
-				Src: cr.Spec.ForProvider.Module,
-				Dst: dir,
-				Pwd: dir,
+				Src:  cr.Spec.ForProvider.Module,
+				Dst:  dir,
+				Pwd:  dir,
 				Mode: getter.ClientModeDir,
 			}
 			err := gc.Get()
@@ -339,9 +339,9 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 		if shouldPull {
 			gc := getter.Client{
-				Src: url,
-				Dst: dir,
-				Pwd: dir,
+				Src:  url,
+				Dst:  dir,
+				Pwd:  dir,
 				Mode: getter.ClientModeDir,
 			}
 			err = gc.Get()

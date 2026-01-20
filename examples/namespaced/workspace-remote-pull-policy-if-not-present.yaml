@@ -15,7 +15,8 @@ spec:
 
     # RemotePullPolicy determines when to download remote module sources
     # IfNotPresent: Downloads module only if not already present locally
-    # This significantly reduces network costs (98.6% reduction) and speeds up reconciliation
+    # This significantly reduces network costs (example: 98.6% reduction for 50MB module at 10-min poll)
+    # and speeds up reconciliation
     remotePullPolicy: IfNotPresent
 
     vars:
