@@ -150,6 +150,18 @@ spec:
                     items:
                       type: string
                     type: array
+                  remotePullPolicy:
+                    allOf:
+                    - enum:
+                      - Always
+                      - IfNotPresent
+                    - enum:
+                      - Always
+                      - IfNotPresent
+                    default: Always
+                    description: RemotePullPolicy determines when to download remote
+                      module sources.
+                    type: string
                   source:
                     description: Source of the root module of this workspace.
                     enum:
@@ -300,6 +312,10 @@ spec:
                     additionalProperties:
                       x-kubernetes-preserve-unknown-fields: true
                     type: object
+                  remoteSource:
+                    description: RemoteSource is the remote module URL that was last
+                      retrieved
+                    type: string
                 type: object
               conditions:
                 description: Conditions of the resource.

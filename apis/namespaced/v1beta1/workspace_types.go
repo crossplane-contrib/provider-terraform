@@ -101,6 +101,19 @@ const (
 	ModuleSourceFlux   ModuleSource = "Flux"
 )
 
+// RemotePullPolicy determines when to pull remote module sources.
+// +kubebuilder:validation:Enum=Always;IfNotPresent
+type RemotePullPolicy string
+
+// Remote pull policies.
+const (
+	// RemotePullPolicyAlways pulls remote source on every reconciliation (default)
+	RemotePullPolicyAlways RemotePullPolicy = "Always"
+
+	// RemotePullPolicyIfNotPresent pulls remote source only if not already present
+	RemotePullPolicyIfNotPresent RemotePullPolicy = "IfNotPresent"
+)
+
 // WorkspaceParameters are the configurable fields of a Workspace.
 type WorkspaceParameters struct {
 	// The root module of this workspace; i.e. the module containing its main.tf
@@ -157,12 +170,22 @@ type WorkspaceParameters struct {
 	// Boolean value to indicate  CLI logging of terraform execution is enabled or not
 	// +optional
 	EnableTerraformCLILogging bool `json:"enableTerraformCLILogging,omitempty"`
+
+	// RemotePullPolicy determines when to download remote module sources.
+	// +optional
+	// +kubebuilder:validation:Enum=Always;IfNotPresent
+	// +kubebuilder:default=Always
+	RemotePullPolicy *RemotePullPolicy `json:"remotePullPolicy,omitempty"`
 }
 
 // WorkspaceObservation are the observable fields of a Workspace.
 type WorkspaceObservation struct {
 	Checksum string                       `json:"checksum,omitempty"`
 	Outputs  map[string]extensionsV1.JSON `json:"outputs,omitempty"`
+
+	// RemoteSource is the remote module URL that was last retrieved
+	// +optional
+	RemoteSource string `json:"remoteSource,omitempty"`
 }
 
 // A WorkspaceSpec defines the desired state of a Workspace.

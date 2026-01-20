@@ -242,16 +242,55 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 
 	switch cr.Spec.ForProvider.Source {
 	case v1beta1.ModuleSourceRemote:
-		gc := getter.Client{
-			Src: cr.Spec.ForProvider.Module,
-			Dst: dir,
-			Pwd: dir,
+		shouldPull := false
 
-			Mode: getter.ClientModeDir,
+		// Determine if we should pull the remote source
+		switch {
+		case cr.Spec.ForProvider.RemotePullPolicy == nil ||
+			*cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyAlways:
+			// Always pull (default behavior)
+			shouldPull = true
+			l.Debug("Remote module pull policy: Always")
+
+		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
+			// Check if .terraform directory exists
+			terraformDir := filepath.Join(dir, ".terraform")
+			exists, err := c.fs.DirExists(terraformDir)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to check .terraform directory")
+			}
+
+			if exists {
+				// Module already present - check if spec changed
+				if cr.Spec.ForProvider.Module != cr.Status.AtProvider.RemoteSource {
+					l.Debug("Remote module URL changed", "old", cr.Status.AtProvider.RemoteSource, "new", cr.Spec.ForProvider.Module)
+					shouldPull = true
+				} else {
+					l.Debug("Remote module already present, skipping download", "dir", terraformDir)
+					shouldPull = false
+				}
+			} else {
+				l.Debug("Remote module not present, pulling", "dir", terraformDir)
+				shouldPull = true
+			}
 		}
-		err := gc.Get()
-		if err != nil {
-			return nil, errors.Wrap(err, errRemoteModule)
+
+		// Pull remote source if needed
+		if shouldPull {
+			gc := getter.Client{
+				Src: cr.Spec.ForProvider.Module,
+				Dst: dir,
+				Pwd: dir,
+				Mode: getter.ClientModeDir,
+			}
+			err := gc.Get()
+			if err != nil {
+				return nil, errors.Wrap(err, errRemoteModule)
+			}
+
+			// Update status with downloaded module URL
+			cr.Status.AtProvider.RemoteSource = cr.Spec.ForProvider.Module
+			l.Debug("Remote module downloaded", "url", cr.Spec.ForProvider.Module)
 		}
 
 	case v1beta1.ModuleSourceInline:
@@ -268,16 +307,50 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		if err != nil {
 			return nil, errors.Wrap(err, errFluxArtefactModule)
 		}
-		gc := getter.Client{
-			Src: url,
-			Dst: dir,
-			Pwd: dir,
 
-			Mode: getter.ClientModeDir,
+		shouldPull := false
+
+		// Same pull policy logic as Remote source
+		switch {
+		case cr.Spec.ForProvider.RemotePullPolicy == nil ||
+			*cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyAlways:
+			shouldPull = true
+			l.Debug("Flux module pull policy: Always")
+
+		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
+			terraformDir := filepath.Join(dir, ".terraform")
+			exists, err := c.fs.DirExists(terraformDir)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to check .terraform directory")
+			}
+
+			if exists && url == cr.Status.AtProvider.RemoteSource {
+				l.Debug("Flux module already present, skipping download", "dir", terraformDir)
+				shouldPull = false
+			} else {
+				if exists {
+					l.Debug("Flux module URL changed", "old", cr.Status.AtProvider.RemoteSource, "new", url)
+				} else {
+					l.Debug("Flux module not present, pulling", "dir", terraformDir)
+				}
+				shouldPull = true
+			}
 		}
-		err = gc.Get()
-		if err != nil {
-			return nil, errors.Wrap(err, errFluxArtefactModule)
+
+		if shouldPull {
+			gc := getter.Client{
+				Src: url,
+				Dst: dir,
+				Pwd: dir,
+				Mode: getter.ClientModeDir,
+			}
+			err = gc.Get()
+			if err != nil {
+				return nil, errors.Wrap(err, errFluxArtefactModule)
+			}
+
+			cr.Status.AtProvider.RemoteSource = url
+			l.Debug("Flux module downloaded", "url", url)
 		}
 	}
 
