@@ -151,16 +151,12 @@ spec:
                       type: string
                     type: array
                   remotePullPolicy:
-                    allOf:
-                    - enum:
-                      - Always
-                      - IfNotPresent
-                    - enum:
-                      - Always
-                      - IfNotPresent
                     default: Always
                     description: RemotePullPolicy determines when to download remote
                       module sources.
+                    enum:
+                    - Always
+                    - IfNotPresent
                     type: string
                   source:
                     description: Source of the root module of this workspace.

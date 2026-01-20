@@ -173,7 +173,6 @@ type WorkspaceParameters struct {
 
 	// RemotePullPolicy determines when to download remote module sources.
 	// +optional
-	// +kubebuilder:validation:Enum=Always;IfNotPresent
 	// +kubebuilder:default=Always
 	RemotePullPolicy *RemotePullPolicy `json:"remotePullPolicy,omitempty"`
 }
