@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
@@ -789,7 +790,131 @@ func TestConnect(t *testing.T) {
 			},
 			want: nil,
 		},
+		"RemotePullPolicyIfNotPresentSkipsDownload": {
+			reason: "Remote module with IfNotPresent policy should skip download when .terraform exists and URL unchanged",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				fs: func() afero.Afero {
+					fs := afero.Afero{Fs: afero.NewMemMapFs()}
+					// Pre-create .terraform directory to simulate module already present
+					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					return fs
+				}(),
+				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
+					return &MockTf{
+						MockInit:             func(ctx context.Context, o ...terraform.InitOption) error { return nil },
+						MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+						MockWorkspace:        func(_ context.Context, _ string) error { return nil },
+					}
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source:           v1beta1.ModuleSourceRemote,
+							Module:           "git::https://github.com/org/repo?ref=v1.0.0",
+							RemotePullPolicy: func() *v1beta1.RemotePullPolicy { p := v1beta1.RemotePullPolicyIfNotPresent; return &p }(),
+						},
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+					Status: v1beta1.WorkspaceStatus{
+						AtProvider: v1beta1.WorkspaceObservation{
+							RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0",
+						},
+					},
+				},
+			},
+			want: nil,
+		},
+		"RemotePullPolicyIfNotPresentAttemptsDownloadWhenURLChanged": {
+			reason: "Remote module with IfNotPresent policy should attempt download when URL changes",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				fs: func() afero.Afero {
+					fs := afero.Afero{Fs: afero.NewMemMapFs()}
+					// Pre-create .terraform directory to simulate module already present
+					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					return fs
+				}(),
+				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
+					return &MockTf{
+						MockInit:             func(ctx context.Context, o ...terraform.InitOption) error { return nil },
+						MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+						MockWorkspace:        func(_ context.Context, _ string) error { return nil },
+					}
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source:           v1beta1.ModuleSourceRemote,
+							Module:           "git::https://github.com/org/repo?ref=v2.0.0", // Changed
+							RemotePullPolicy: func() *v1beta1.RemotePullPolicy { p := v1beta1.RemotePullPolicyIfNotPresent; return &p }(),
+						},
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+					Status: v1beta1.WorkspaceStatus{
+						AtProvider: v1beta1.WorkspaceObservation{
+							RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0", // Old
+						},
+					},
+				},
+			},
+			// Test validates by checking error contains errRemoteModule (proves download attempted)
+			want: nil, // Handled by special case logic
+		},
+		"RemotePullPolicyIfNotPresentAttemptsDownloadWhenNotPresent": {
+			reason: "Remote module with IfNotPresent policy should attempt download when .terraform missing",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				fs:    afero.Afero{Fs: afero.NewMemMapFs()}, // No .terraform directory
+				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
+					return &MockTf{
+						MockInit:             func(ctx context.Context, o ...terraform.InitOption) error { return nil },
+						MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+						MockWorkspace:        func(_ context.Context, _ string) error { return nil },
+					}
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source:           v1beta1.ModuleSourceRemote,
+							Module:           "git::https://github.com/org/repo?ref=v1.0.0",
+							RemotePullPolicy: func() *v1beta1.RemotePullPolicy { p := v1beta1.RemotePullPolicyIfNotPresent; return &p }(),
+						},
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+				},
+			},
+			// Test validates by checking error contains errRemoteModule (proves download attempted)
+			want: nil, // Handled by special case logic
+		},
 	}
+	// NOTE: Tests that verify download attempts will fail with go-getter errors,
+	// which proves the skip logic is working correctly. The key test is
+	// "RemotePullPolicyIfNotPresentSkipsDownload" which verifies cost savings.
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -801,8 +926,19 @@ func TestConnect(t *testing.T) {
 				logger:    logging.NewNopLogger(),
 			}
 			_, err := c.Connect(tc.args.ctx, tc.args.mg)
-			if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\ne.Connect(...): -want error, +got error:\n%s\n", tc.reason, diff)
+
+			// Special handling for RemotePullPolicy download attempt tests
+			// These tests verify download was attempted by checking for errRemoteModule
+			if strings.Contains(name, "AttemptsDownload") {
+				if err == nil {
+					t.Errorf("\n%s\ne.Connect(...): expected error (download attempt), got nil\n", tc.reason)
+				} else if !strings.Contains(err.Error(), errRemoteModule) {
+					t.Errorf("\n%s\ne.Connect(...): expected error containing %q, got: %v\n", tc.reason, errRemoteModule, err)
+				}
+			} else {
+				if diff := cmp.Diff(tc.want, err, test.EquateErrors()); diff != "" {
+					t.Errorf("\n%s\ne.Connect(...): -want error, +got error:\n%s\n", tc.reason, diff)
+				}
 			}
 		})
 	}
