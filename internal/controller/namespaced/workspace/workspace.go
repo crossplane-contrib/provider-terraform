@@ -545,7 +545,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 	if err != nil {
 		return managed.ExternalObservation{}, errors.Wrap(err, errOutputs)
 	}
+
+	// Preserve remoteSource from previous status (set in Connect)
+	remoteSource := cr.Status.AtProvider.RemoteSource
 	cr.Status.AtProvider = generateWorkspaceObservation(op)
+	cr.Status.AtProvider.RemoteSource = remoteSource
 
 	checksum, err := c.tf.GenerateChecksum(ctx)
 	if err != nil {

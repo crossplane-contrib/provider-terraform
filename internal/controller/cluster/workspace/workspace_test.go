@@ -1393,6 +1393,56 @@ func TestObserve(t *testing.T) {
 				},
 			},
 		},
+		"RemoteSourcePreserved": {
+			reason: "RemoteSource field set in Connect should be preserved through Observe call",
+			fields: fields{
+				tf: &MockTf{
+					MockDiff:             func(ctx context.Context, o ...terraform.Option) (bool, error) { return false, nil },
+					MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+					MockResources: func(ctx context.Context) ([]string, error) {
+						return []string{"cool_resource.very"}, nil
+					},
+					MockOutputs: func(ctx context.Context) ([]terraform.Output, error) {
+						return []terraform.Output{
+							{Name: "string", Type: terraform.OutputTypeString, Sensitive: false},
+						}, nil
+					},
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source: v1beta1.ModuleSourceRemote,
+							Module: "git::https://github.com/org/repo?ref=v1.0.0",
+						},
+					},
+					Status: v1beta1.WorkspaceStatus{
+						AtProvider: v1beta1.WorkspaceObservation{
+							// Simulating remoteSource was set in Connect
+							RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0",
+						},
+					},
+				},
+			},
+			want: want{
+				o: managed.ExternalObservation{
+					ResourceExists:   true,
+					ResourceUpToDate: true,
+					ConnectionDetails: managed.ConnectionDetails{
+						"string": []byte{},
+					},
+				},
+				wo: v1beta1.WorkspaceObservation{
+					Checksum: tfChecksum,
+					Outputs: map[string]extensionsV1.JSON{
+						"string": {Raw: []byte("null")},
+					},
+					// RemoteSource must be preserved
+					RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0",
+				},
+			},
+		},
 	}
 
 	for name, tc := range cases {
