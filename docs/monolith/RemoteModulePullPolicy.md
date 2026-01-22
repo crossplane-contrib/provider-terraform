@@ -81,10 +81,15 @@ spec:
 
 ### Detection Mechanism
 
-The `IfNotPresent` policy checks for the presence of a `.terraform` directory in the workspace:
+The `IfNotPresent` policy checks for the presence of a `.terraform` directory in the workspace. When an `entrypoint` is specified, the check is performed in the entrypoint subdirectory (where Terraform actually runs), not the base workspace directory.
 
+**Detection logic:**
 ```
-if .terraform directory exists:
+workspace_dir = base_workspace_directory
+if entrypoint is specified:
+    workspace_dir = base_workspace_directory/entrypoint
+
+if .terraform directory exists in workspace_dir:
     if module URL == previously downloaded URL:
         → Skip download (reuse existing module)
     else:
@@ -92,6 +97,21 @@ if .terraform directory exists:
 else:
     → Download (module not present)
 ```
+
+**Example with entrypoint:**
+```yaml
+spec:
+  forProvider:
+    source: Remote
+    module: git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=v5.1.2
+    entrypoint: examples/complete
+    remotePullPolicy: IfNotPresent
+```
+
+In this case:
+- Module is downloaded to: `/tf/workspace-uid/`
+- Terraform runs in: `/tf/workspace-uid/examples/complete/`
+- `.terraform` check looks in: `/tf/workspace-uid/examples/complete/.terraform`
 
 ### Status Tracking
 
