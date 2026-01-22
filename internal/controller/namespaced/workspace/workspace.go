@@ -240,6 +240,14 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 	}
 
+	// Calculate the final terraform working directory (including entrypoint if specified)
+	// This is where terraform will actually run and create .terraform directory
+	terraformWorkDir := dir
+	if len(cr.Spec.ForProvider.Entrypoint) > 0 {
+		entrypoint := strings.ReplaceAll(cr.Spec.ForProvider.Entrypoint, "../", "")
+		terraformWorkDir = filepath.Join(dir, entrypoint)
+	}
+
 	switch cr.Spec.ForProvider.Source {
 	case v1beta1.ModuleSourceRemote:
 		shouldPull := false
@@ -253,8 +261,8 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			l.Debug("Remote module pull policy: Always")
 
 		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
-			// Check if .terraform directory exists
-			terraformDir := filepath.Join(dir, ".terraform")
+			// Check if .terraform directory exists in the terraform working directory
+			terraformDir := filepath.Join(terraformWorkDir, ".terraform")
 			exists, err := c.fs.DirExists(terraformDir)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to check .terraform directory")
@@ -318,7 +326,8 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			l.Debug("Flux module pull policy: Always")
 
 		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
-			terraformDir := filepath.Join(dir, ".terraform")
+			// Check if .terraform directory exists in the terraform working directory
+			terraformDir := filepath.Join(terraformWorkDir, ".terraform")
 			exists, err := c.fs.DirExists(terraformDir)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to check .terraform directory")

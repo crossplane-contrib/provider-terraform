@@ -833,6 +833,97 @@ func TestConnect(t *testing.T) {
 			},
 			want: nil,
 		},
+		"RemotePullPolicyIfNotPresentSkipsDownloadWithEntrypoint": {
+			reason: "Remote module with IfNotPresent policy should skip download when .terraform exists in entrypoint subdirectory",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				fs: func() afero.Afero {
+					fs := afero.Afero{Fs: afero.NewMemMapFs()}
+					// Pre-create .terraform directory in the entrypoint subdirectory
+					// This is where terraform actually creates .terraform when entrypoint is specified
+					fs.MkdirAll(filepath.Join(tfDir, string(uid), "examples/aws", ".terraform"), 0700)
+					return fs
+				}(),
+				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
+					return &MockTf{
+						MockInit:             func(ctx context.Context, o ...terraform.InitOption) error { return nil },
+						MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+						MockWorkspace:        func(_ context.Context, _ string) error { return nil },
+					}
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source:           v1beta1.ModuleSourceRemote,
+							Module:           "git::https://github.com/org/repo?ref=v1.0.0",
+							Entrypoint:       "examples/aws", // Terraform will run in this subdirectory
+							RemotePullPolicy: func() *v1beta1.RemotePullPolicy { p := v1beta1.RemotePullPolicyIfNotPresent; return &p }(),
+						},
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+					Status: v1beta1.WorkspaceStatus{
+						AtProvider: v1beta1.WorkspaceObservation{
+							RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0",
+						},
+					},
+				},
+			},
+			want: nil,
+		},
+		"RemotePullPolicyIfNotPresentAttemptsDownloadWithEntrypointWrongLocation": {
+			reason: "Remote module with IfNotPresent and entrypoint should attempt download when .terraform is in base dir (not entrypoint)",
+			fields: fields{
+				kube: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil),
+				},
+				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
+				fs: func() afero.Afero {
+					fs := afero.Afero{Fs: afero.NewMemMapFs()}
+					// Create .terraform in the WRONG location (base dir instead of entrypoint subdir)
+					// This simulates what would happen before the fix - we check wrong location
+					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					return fs
+				}(),
+				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
+					return &MockTf{
+						MockInit:             func(ctx context.Context, o ...terraform.InitOption) error { return nil },
+						MockGenerateChecksum: func(ctx context.Context) (string, error) { return tfChecksum, nil },
+						MockWorkspace:        func(_ context.Context, _ string) error { return nil },
+					}
+				},
+			},
+			args: args{
+				mg: &v1beta1.Workspace{
+					ObjectMeta: metav1.ObjectMeta{UID: uid},
+					Spec: v1beta1.WorkspaceSpec{
+						ForProvider: v1beta1.WorkspaceParameters{
+							Source:           v1beta1.ModuleSourceRemote,
+							Module:           "git::https://github.com/org/repo?ref=v1.0.0",
+							Entrypoint:       "examples/aws", // Terraform will run in subdirectory
+							RemotePullPolicy: func() *v1beta1.RemotePullPolicy { p := v1beta1.RemotePullPolicyIfNotPresent; return &p }(),
+						},
+						ResourceSpec: xpv1.ResourceSpec{
+							ProviderConfigReference: &xpv1.Reference{},
+						},
+					},
+					Status: v1beta1.WorkspaceStatus{
+						AtProvider: v1beta1.WorkspaceObservation{
+							RemoteSource: "git::https://github.com/org/repo?ref=v1.0.0",
+						},
+					},
+				},
+			},
+			// Test validates by checking error contains errRemoteModule (proves download attempted)
+			want: nil, // Handled by special case logic
+		},
 		"RemotePullPolicyIfNotPresentAttemptsDownloadWhenURLChanged": {
 			reason: "Remote module with IfNotPresent policy should attempt download when URL changes",
 			fields: fields{
