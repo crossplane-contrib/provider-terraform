@@ -799,8 +799,13 @@ func TestConnect(t *testing.T) {
 				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs: func() afero.Afero {
 					fs := afero.Afero{Fs: afero.NewMemMapFs()}
-					// Pre-create .terraform directory to simulate module already present
-					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					// Pre-create .terraform.lock.hcl to simulate successful terraform init
+					lockFileContent := `# This file is maintained automatically by "terraform init".
+provider "registry.terraform.io/hashicorp/aws" {
+  version = "5.0.0"
+}
+`
+					fs.WriteFile(filepath.Join(tfDir, string(uid), ".terraform.lock.hcl"), []byte(lockFileContent), 0644)
 					return fs
 				}(),
 				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
@@ -842,9 +847,14 @@ func TestConnect(t *testing.T) {
 				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs: func() afero.Afero {
 					fs := afero.Afero{Fs: afero.NewMemMapFs()}
-					// Pre-create .terraform directory in the entrypoint subdirectory
-					// This is where terraform actually creates .terraform when entrypoint is specified
-					fs.MkdirAll(filepath.Join(tfDir, string(uid), "examples/aws", ".terraform"), 0700)
+					// Pre-create .terraform.lock.hcl in the entrypoint subdirectory
+					// This is where terraform actually creates lock file when entrypoint is specified
+					lockFileContent := `# This file is maintained automatically by "terraform init".
+provider "registry.terraform.io/hashicorp/aws" {
+  version = "5.0.0"
+}
+`
+					fs.WriteFile(filepath.Join(tfDir, string(uid), "examples/aws", ".terraform.lock.hcl"), []byte(lockFileContent), 0644)
 					return fs
 				}(),
 				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
@@ -887,9 +897,14 @@ func TestConnect(t *testing.T) {
 				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs: func() afero.Afero {
 					fs := afero.Afero{Fs: afero.NewMemMapFs()}
-					// Create .terraform in the WRONG location (base dir instead of entrypoint subdir)
-					// This simulates what would happen before the fix - we check wrong location
-					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					// Create .terraform.lock.hcl in the WRONG location (base dir instead of entrypoint subdir)
+					// This verifies we check the entrypoint subdirectory, not the base directory
+					lockFileContent := `# This file is maintained automatically by "terraform init".
+provider "registry.terraform.io/hashicorp/aws" {
+  version = "5.0.0"
+}
+`
+					fs.WriteFile(filepath.Join(tfDir, string(uid), ".terraform.lock.hcl"), []byte(lockFileContent), 0644)
 					return fs
 				}(),
 				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {
@@ -933,8 +948,13 @@ func TestConnect(t *testing.T) {
 				usage: tfClient.LegacyTrackerFn(func(_ context.Context, _ resource.LegacyManaged) error { return nil }),
 				fs: func() afero.Afero {
 					fs := afero.Afero{Fs: afero.NewMemMapFs()}
-					// Pre-create .terraform directory to simulate module already present
-					fs.MkdirAll(filepath.Join(tfDir, string(uid), ".terraform"), 0700)
+					// Pre-create .terraform.lock.hcl to simulate successful terraform init
+					lockFileContent := `# This file is maintained automatically by "terraform init".
+provider "registry.terraform.io/hashicorp/aws" {
+  version = "5.0.0"
+}
+`
+					fs.WriteFile(filepath.Join(tfDir, string(uid), ".terraform.lock.hcl"), []byte(lockFileContent), 0644)
 					return fs
 				}(),
 				terraform: func(_ string, _ bool, _ bool, _ logging.Logger, _ ...string) tfclient {

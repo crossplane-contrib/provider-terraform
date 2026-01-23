@@ -261,24 +261,26 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			l.Debug("Remote module pull policy: Always")
 
 		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
-			// Check if .terraform directory exists in the terraform working directory
-			terraformDir := filepath.Join(terraformWorkDir, ".terraform")
-			exists, err := c.fs.DirExists(terraformDir)
+			// Check if .terraform.lock.hcl exists (indicates successful init)
+			// This file is created at the END of terraform init, making it the
+			// most reliable indicator that module initialization completed
+			lockFile := filepath.Join(terraformWorkDir, ".terraform.lock.hcl")
+			lockFileValid, err := validateTerraformLockFile(c.fs, lockFile)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to check .terraform directory")
+				return nil, errors.Wrap(err, "failed to validate terraform lock file")
 			}
 
-			if exists {
-				// Module already present - check if spec changed
+			if lockFileValid {
+				// Module already initialized - check if spec changed
 				if cr.Spec.ForProvider.Module != cr.Status.AtProvider.RemoteSource {
 					l.Debug("Remote module URL changed", "old", cr.Status.AtProvider.RemoteSource, "new", cr.Spec.ForProvider.Module)
 					shouldPull = true
 				} else {
-					l.Debug("Remote module already present, skipping download", "dir", terraformDir)
+					l.Debug("Remote module already initialized, skipping download", "lockFile", lockFile)
 					shouldPull = false
 				}
 			} else {
-				l.Debug("Remote module not present, pulling", "dir", terraformDir)
+				l.Debug("Terraform not initialized, downloading module", "lockFile", lockFile)
 				shouldPull = true
 			}
 		}
@@ -326,21 +328,21 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 			l.Debug("Flux module pull policy: Always")
 
 		case *cr.Spec.ForProvider.RemotePullPolicy == v1beta1.RemotePullPolicyIfNotPresent:
-			// Check if .terraform directory exists in the terraform working directory
-			terraformDir := filepath.Join(terraformWorkDir, ".terraform")
-			exists, err := c.fs.DirExists(terraformDir)
+			// Check if .terraform.lock.hcl exists (indicates successful init)
+			lockFile := filepath.Join(terraformWorkDir, ".terraform.lock.hcl")
+			lockFileValid, err := validateTerraformLockFile(c.fs, lockFile)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to check .terraform directory")
+				return nil, errors.Wrap(err, "failed to validate terraform lock file")
 			}
 
-			if exists && url == cr.Status.AtProvider.RemoteSource {
-				l.Debug("Flux module already present, skipping download", "dir", terraformDir)
+			if lockFileValid && url == cr.Status.AtProvider.RemoteSource {
+				l.Debug("Flux module already initialized, skipping download", "lockFile", lockFile)
 				shouldPull = false
 			} else {
-				if exists {
+				if lockFileValid {
 					l.Debug("Flux module URL changed", "old", cr.Status.AtProvider.RemoteSource, "new", url)
 				} else {
-					l.Debug("Flux module not present, pulling", "dir", terraformDir)
+					l.Debug("Terraform not initialized, downloading Flux module", "lockFile", lockFile)
 				}
 				shouldPull = true
 			}
@@ -694,6 +696,31 @@ func op2cd(o []terraform.Output) managed.ConnectionDetails {
 		}
 	}
 	return cd
+}
+
+// validateTerraformLockFile checks if .terraform.lock.hcl exists and is valid.
+// This file is created at the END of successful terraform init, making it the
+// most reliable indicator that module initialization completed successfully.
+func validateTerraformLockFile(fs afero.Afero, lockFilePath string) (bool, error) {
+	data, err := fs.ReadFile(lockFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // File doesn't exist, not an error
+		}
+		return false, err // Read error
+	}
+
+	if len(data) == 0 {
+		return false, nil // Empty file (interrupted write)
+	}
+
+	// Basic validation: lock file should contain "provider" declarations
+	content := string(data)
+	if !strings.Contains(content, "provider") {
+		return false, nil // Doesn't look like a valid lock file
+	}
+
+	return true, nil
 }
 
 // generateWorkspaceObservation is used to produce v1beta1.WorkspaceObservation from

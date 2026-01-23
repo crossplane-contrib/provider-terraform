@@ -75,13 +75,20 @@ spec:
 **Automatic re-download triggers:**
 - Module URL changes (including git ref)
 - Workspace pod restart (without persistent volume)
-- `.terraform` directory is deleted or missing
+- `.terraform.lock.hcl` file is deleted or missing
+- Interrupted `terraform init` (lock file not created)
 
 ## How It Works
 
 ### Detection Mechanism
 
-The `IfNotPresent` policy checks for the presence of a `.terraform` directory in the workspace. When an `entrypoint` is specified, the check is performed in the entrypoint subdirectory (where Terraform actually runs), not the base workspace directory.
+The `IfNotPresent` policy checks for the presence of a valid `.terraform.lock.hcl` file in the workspace. This file is created at the END of a successful `terraform init`, making it the most reliable indicator that the module has been successfully initialized. When an `entrypoint` is specified, the check is performed in the entrypoint subdirectory (where Terraform actually runs), not the base workspace directory.
+
+**Why .terraform.lock.hcl?**
+- Created only after successful `terraform init` completion
+- Interrupted `terraform init` leaves `.terraform/` directory but NO lock file
+- Located at workspace root (no entrypoint path confusion)
+- Contains provider dependency information
 
 **Detection logic:**
 ```
@@ -89,13 +96,13 @@ workspace_dir = base_workspace_directory
 if entrypoint is specified:
     workspace_dir = base_workspace_directory/entrypoint
 
-if .terraform directory exists in workspace_dir:
+if .terraform.lock.hcl exists and is valid in workspace_dir:
     if module URL == previously downloaded URL:
         → Skip download (reuse existing module)
     else:
         → Download (module URL changed)
 else:
-    → Download (module not present)
+    → Download (module not initialized)
 ```
 
 **Example with entrypoint:**
@@ -111,7 +118,7 @@ spec:
 In this case:
 - Module is downloaded to: `/tf/workspace-uid/`
 - Terraform runs in: `/tf/workspace-uid/examples/complete/`
-- `.terraform` check looks in: `/tf/workspace-uid/examples/complete/.terraform`
+- `.terraform.lock.hcl` check looks in: `/tf/workspace-uid/examples/complete/.terraform.lock.hcl`
 
 ### Status Tracking
 
@@ -254,9 +261,10 @@ kubectl logs -n upbound-system deploy/provider-terraform-* | grep "Remote module
    - Pod restart = module is lost
    - Solution: Use persistent volumes for `/tf` directory (future enhancement)
 
-2. **.terraform directory is being deleted**
+2. **.terraform.lock.hcl file is being deleted**
    - Check if any process is cleaning up the workspace directory
    - Verify workspace directory permissions
+   - Check if `terraform init` is completing successfully (lock file created at END)
 
 3. **Module URL is changing on every reconciliation**
    - Check if dynamic refs are being used
