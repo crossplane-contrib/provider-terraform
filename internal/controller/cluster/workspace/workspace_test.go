@@ -1660,6 +1660,7 @@ func TestCreate(t *testing.T) {
 					},
 				},
 				wo: v1beta1.WorkspaceObservation{
+					Checksum: tfChecksum,
 					Outputs: map[string]extensionsV1.JSON{
 						"object": {Raw: []byte("null")},
 					},

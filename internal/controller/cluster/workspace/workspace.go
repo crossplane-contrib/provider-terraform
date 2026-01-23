@@ -546,16 +546,15 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, errors.Wrap(err, errOutputs)
 	}
 
-	// Preserve remoteSource from previous status (set in Connect)
-	remoteSource := cr.Status.AtProvider.RemoteSource
-	cr.Status.AtProvider = generateWorkspaceObservation(op)
-	cr.Status.AtProvider.RemoteSource = remoteSource
-
+	// Generate checksum first
 	checksum, err := c.tf.GenerateChecksum(ctx)
 	if err != nil {
 		return managed.ExternalObservation{}, errors.Wrap(err, errChecksum)
 	}
-	cr.Status.AtProvider.Checksum = checksum
+
+	// Preserve remoteSource from previous status (set in Connect)
+	// Generate observation with all persistent fields
+	cr.Status.AtProvider = generateWorkspaceObservation(op, checksum, cr.Status.AtProvider.RemoteSource)
 
 	if !differs {
 		// TODO(negz): Allow Workspaces to optionally derive their readiness from an
@@ -598,7 +597,16 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	if err != nil {
 		return managed.ExternalUpdate{}, errors.Wrap(err, errOutputs)
 	}
-	cr.Status.AtProvider = generateWorkspaceObservation(op)
+
+	// Generate checksum after apply
+	checksum, err := c.tf.GenerateChecksum(ctx)
+	if err != nil {
+		return managed.ExternalUpdate{}, errors.Wrap(err, errChecksum)
+	}
+
+	// Preserve remoteSource and update observation with checksum
+	cr.Status.AtProvider = generateWorkspaceObservation(op, checksum, cr.Status.AtProvider.RemoteSource)
+
 	// TODO(negz): Allow Workspaces to optionally derive their readiness from an
 	// output - similar to the logic XRs use to derive readiness from a field of
 	// a composed resource.
@@ -690,9 +698,11 @@ func op2cd(o []terraform.Output) managed.ConnectionDetails {
 
 // generateWorkspaceObservation is used to produce v1beta1.WorkspaceObservation from
 // workspace_type.Workspace.
-func generateWorkspaceObservation(op []terraform.Output) v1beta1.WorkspaceObservation {
+func generateWorkspaceObservation(op []terraform.Output, checksum, remoteSource string) v1beta1.WorkspaceObservation {
 	wo := v1beta1.WorkspaceObservation{
-		Outputs: make(map[string]extensionsV1.JSON, len(op)),
+		Outputs:      make(map[string]extensionsV1.JSON, len(op)),
+		Checksum:     checksum,
+		RemoteSource: remoteSource,
 	}
 	for _, o := range op {
 		if !o.Sensitive {
