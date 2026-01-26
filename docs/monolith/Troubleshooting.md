@@ -151,6 +151,67 @@ The provider removes and recreates the entire workspace directory for each recon
 1. **Use Inline Workspaces**: When possible, embed terraform configuration directly in the Workspace spec rather than referencing remote repositories.
 2. **Disable Plugin Cache**: For remote repositories with high reconciliation rates, disable the plugin cache to avoid conflicts.
 3. **Monitor Traffic Costs**: Be aware of increased network egress costs when using remote repositories with disabled plugin cache.
+4. **Use IfNotPresent Pull Policy**: Set `remotePullPolicy: IfNotPresent` to avoid re-downloading modules on every reconciliation (see below).
+
+## Remote Module Repeatedly Downloaded
+
+### Problem Description
+
+Remote Terraform modules are downloaded on every reconciliation, causing:
+
+- High network egress costs (up to 7.2GB/day per workspace)
+- Slower reconciliation times due to download latency
+- Unnecessary bandwidth usage
+
+**Example scenario:**
+- 50MB remote module
+- Reconciles every 10 minutes (6 times/hour)
+- Result: 300MB/hour = 7.2GB/day of repeated downloads
+
+### Solution
+
+Set `remotePullPolicy: IfNotPresent` in the Workspace spec to download the module once and reuse it:
+
+```yaml
+apiVersion: tf.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: example
+spec:
+  forProvider:
+    source: Remote
+    module: git::https://github.com/terraform-aws-modules/terraform-aws-vpc?ref=v5.1.2
+    remotePullPolicy: IfNotPresent  # Add this line
+```
+
+**Benefits:**
+- Significant network reduction (example: 50MB module at 10-min poll = 7.2GB/day → 50MB/day, 98.6% savings)
+- Faster reconciliation after initial download
+- Module automatically re-downloaded if URL changes
+
+**Best practices:**
+- Always use with pinned module versions (e.g., `?ref=v5.1.2`, not `?ref=main`)
+- Verify the module URL includes a specific version tag or commit SHA
+- Monitor logs to confirm download skipping behavior
+
+**Verification:**
+```bash
+# Check workspace logs
+kubectl logs -n upbound-system deploy/provider-terraform-* | grep "Remote module"
+
+# First reconciliation: "Remote module downloaded"
+# Subsequent: "Remote module already present, skipping download"
+
+# Check status field
+kubectl get workspace <name> -o jsonpath='{.status.atProvider.remoteSource}'
+```
+
+**When to use Always policy (default):**
+- Development workspaces with frequently changing modules
+- Modules without pinned versions (floating refs like `main` or `develop`)
+- When module freshness is more important than cost
+
+See the [Remote Module Pull Policy](RemoteModulePullPolicy.md) documentation for detailed information.
 
 ## Error Messages and Recovery
 

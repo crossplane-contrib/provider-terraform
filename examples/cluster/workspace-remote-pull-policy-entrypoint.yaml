@@ -1,0 +1,46 @@
+apiVersion: tf.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: example-vpc-with-entrypoint
+  annotations:
+    meta.upbound.io/example-id: tf/v1beta1/workspace
+spec:
+  forProvider:
+    # Use a well-known Terraform AWS VPC module
+    source: Remote
+    module: git::https://github.com/terraform-aws-modules/terraform-aws-vpc.git?ref=v5.1.2
+
+    # Use one of the example subdirectories as entrypoint
+    # This tests that .terraform directory is checked in the correct location
+    entrypoint: examples/complete
+
+    # Set IfNotPresent to avoid re-downloading on every reconciliation
+    remotePullPolicy: IfNotPresent
+
+    # Provide minimal required variables for the example
+    vars:
+    - key: name
+      value: test-vpc
+    - key: cidr
+      value: "10.0.0.0/16"
+    - key: azs
+      value: '["us-west-2a", "us-west-2b"]'
+    - key: private_subnets
+      value: '["10.0.1.0/24", "10.0.2.0/24"]'
+    - key: public_subnets
+      value: '["10.0.101.0/24", "10.0.102.0/24"]'
+    - key: enable_nat_gateway
+      value: "false"
+    - key: enable_vpn_gateway
+      value: "false"
+
+    # Add plan-only arg to avoid actual infrastructure creation during testing
+    planArgs:
+    - "-out=tfplan"
+
+  providerConfigRef:
+    name: default
+
+  writeConnectionSecretToRef:
+    namespace: upbound-system
+    name: example-vpc-entrypoint-outputs

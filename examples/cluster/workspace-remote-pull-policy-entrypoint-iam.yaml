@@ -1,0 +1,34 @@
+apiVersion: tf.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: example-iam-with-entrypoint
+  annotations:
+    meta.upbound.io/example-id: tf/v1beta1/workspace
+spec:
+  forProvider:
+    # Use a well-known Terraform AWS VPC module
+    source: Remote
+    module: git::https://github.com/ytsarev/provider-terraform-test-module.git?ref=main
+
+    # Use one of the example subdirectories as entrypoint
+    # This tests that .terraform directory is checked in the correct location
+    entrypoint: relative-path-iam
+
+    # Set IfNotPresent to avoid re-downloading on every reconciliation
+    remotePullPolicy: IfNotPresent
+
+    # Provide minimal required variables for the example
+    vars:
+    - key: iamRole
+      value: test-remote-pull-policy
+
+    # Add plan-only arg to avoid actual infrastructure creation during testing
+    planArgs:
+    - "-out=tfplan"
+
+  providerConfigRef:
+    name: default
+
+  writeConnectionSecretToRef:
+    namespace: crossplane-system
+    name: example-iam-entrypoint-outputs

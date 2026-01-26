@@ -1,0 +1,34 @@
+apiVersion: tf.m.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: example-remote-if-not-present
+  namespace: upbound-system
+spec:
+  providerConfigRef:
+    name: default
+    kind: ClusterProviderConfig
+  forProvider:
+    # Remote module source with IfNotPresent pull policy
+    # The module will be downloaded once and reused on subsequent reconciliations
+    source: Remote
+    module: git::https://github.com/terraform-aws-modules/terraform-aws-vpc?ref=v5.1.2
+
+    # RemotePullPolicy determines when to download remote module sources
+    # IfNotPresent: Downloads module only if not already present locally
+    # This significantly reduces network costs (example: 98.6% reduction for 50MB module at 10-min poll)
+    # and speeds up reconciliation
+    remotePullPolicy: IfNotPresent
+
+    vars:
+    - key: name
+      value: my-vpc
+    - key: cidr
+      value: "10.0.0.0/16"
+    - key: azs
+      value: '["us-west-2a", "us-west-2b"]'
+    - key: private_subnets
+      value: '["10.0.1.0/24", "10.0.2.0/24"]'
+    - key: public_subnets
+      value: '["10.0.101.0/24", "10.0.102.0/24"]'
+    - key: enable_nat_gateway
+      value: "true"

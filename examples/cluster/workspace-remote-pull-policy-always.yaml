@@ -1,0 +1,37 @@
+apiVersion: tf.upbound.io/v1beta1
+kind: Workspace
+metadata:
+  name: example-remote-always
+  annotations:
+    meta.upbound.io/example-id: tf/v1beta1/workspace
+    crossplane.io/external-name: myworkspace-always
+spec:
+  forProvider:
+    # Remote module source with Always pull policy (default behavior)
+    # The module will be downloaded on every reconciliation
+    source: Remote
+    module: git::https://github.com/terraform-aws-modules/terraform-aws-vpc?ref=v5.1.2
+
+    # RemotePullPolicy determines when to download remote module sources
+    # Always: Downloads module on every reconciliation (default)
+    # This is the current behavior and is recommended when you need to ensure
+    # the latest version of the module is always used
+    remotePullPolicy: Always
+
+    vars:
+    - key: name
+      value: my-vpc
+    - key: cidr
+      value: "10.0.0.0/16"
+    - key: azs
+      value: '["us-west-2a", "us-west-2b"]'
+    - key: private_subnets
+      value: '["10.0.1.0/24", "10.0.2.0/24"]'
+    - key: public_subnets
+      value: '["10.0.101.0/24", "10.0.102.0/24"]'
+    - key: enable_nat_gateway
+      value: "true"
+
+  writeConnectionSecretToRef:
+    namespace: default
+    name: terraform-workspace-example-remote-always
