@@ -49,7 +49,6 @@ import (
 	tfClient "github.com/upbound/provider-terraform/internal/clients"
 	"github.com/upbound/provider-terraform/internal/features"
 	"github.com/upbound/provider-terraform/internal/terraform"
-	"github.com/upbound/provider-terraform/internal/workdir"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
@@ -105,6 +104,11 @@ func envVarFallback(envvar string, fallback string) string {
 
 var tfDir = envVarFallback("XP_TF_DIR", "/tf")
 
+// GetTerraformDir returns the Terraform working directory root.
+func GetTerraformDir() string {
+	return tfDir
+}
+
 type tfclient interface {
 	Init(ctx context.Context, o ...terraform.InitOption) error
 	Workspace(ctx context.Context, name string) error
@@ -122,12 +126,6 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 	name := managed.ControllerName(v1beta1.WorkspaceGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
-	gcWorkspace := workdir.NewGarbageCollector(mgr.GetClient(), tfDir, workdir.WithFs(fs), workdir.WithLogger(o.Logger))
-	go gcWorkspace.Run(context.TODO(), true)
-
-	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("/tmp", tfDir), workdir.WithFs(fs), workdir.WithLogger(o.Logger))
-	go gcTmp.Run(context.TODO(), true)
-
 	c := &connector{
 		kube:   mgr.GetClient(),
 		usage:  resource.NewProviderConfigUsageTracker(mgr.GetClient(), &v1beta1.ProviderConfigUsage{}),

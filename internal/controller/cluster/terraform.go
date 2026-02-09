@@ -25,11 +25,16 @@ import (
 
 	"github.com/upbound/provider-terraform/internal/controller/cluster/config"
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
+	"github.com/upbound/provider-terraform/internal/controller/gc"
 )
 
 // Setup creates all TF controllers with the supplied logger and adds them
 // to the supplied manager.
 func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration) error {
+	if err := gc.Setup(mgr, workspace.GetTerraformDir(), o.Logger); err != nil {
+		return err
+	}
+
 	for _, setup := range []func(ctrl.Manager, controller.Options, time.Duration, time.Duration) error{
 		config.Setup,
 		workspace.Setup,
@@ -44,6 +49,10 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJi
 // SetupGated creates all controllers with the supplied logger and adds them to
 // the supplied manager gated.
 func SetupGated(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration) error {
+	if err := gc.Setup(mgr, workspace.GetTerraformDir(), o.Logger); err != nil {
+		return err
+	}
+
 	for _, setup := range []func(ctrl.Manager, controller.Options, time.Duration, time.Duration) error{
 		config.SetupGated,
 		workspace.SetupGated,
