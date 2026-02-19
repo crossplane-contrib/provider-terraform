@@ -88,26 +88,23 @@ func NewGarbageCollector(c client.Client, parentDir string, o ...GarbageCollecto
 	return gc
 }
 
-// Run the garbage collector. Blocks until the supplied context is done.
-func (gc *GarbageCollector) Run(ctx context.Context) {
+// Start runs the garbage collector. Blocks until the supplied context
+// is done.
+//
+// Implements manager.Runnable to allow controller-runtime
+// managers can manage the garbage collector.
+func (gc *GarbageCollector) Start(ctx context.Context) error {
 	t := time.NewTicker(gc.interval)
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-t.C:
 			if err := gc.collect(ctx); err != nil {
 				gc.log.Info("Garbage collection failed", "error", err)
 			}
 		}
 	}
-}
-
-// Start implements manager.Runnable interface.
-// This allows the GarbageCollector to be managed by the controller-runtime manager.
-func (gc *GarbageCollector) Start(ctx context.Context) error {
-	gc.Run(ctx)
-	return nil
 }
 
 func isUUID(u string) bool {
