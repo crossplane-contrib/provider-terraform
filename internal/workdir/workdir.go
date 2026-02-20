@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
@@ -126,13 +127,13 @@ func (gc *GarbageCollector) collect(ctx context.Context) error { //nolint:gocycl
 		// - 403 (Forbidden): No RBAC permissions, workspaces might exist (abort GC)
 		// - Other errors: Network/API issues, can't determine safely (abort GC)
 		switch {
-		case apierrors.IsNotFound(err):
+		case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
 			gc.log.Debug("Cluster-scoped Workspace CRD not installed, skipping")
 		case apierrors.IsForbidden(err):
-			gc.log.Info("No RBAC permissions to list cluster-scoped workspaces, aborting garbage collection")
+			gc.log.Debug("No RBAC permissions to list cluster-scoped workspaces, aborting garbage collection")
 			return err
 		default:
-			gc.log.Info("Failed to list cluster-scoped workspaces, aborting garbage collection")
+			gc.log.Debug("Failed to list cluster-scoped workspaces, aborting garbage collection")
 			return err
 		}
 	} else {
@@ -151,7 +152,7 @@ func (gc *GarbageCollector) collect(ctx context.Context) error { //nolint:gocycl
 		// - 403 (Forbidden): No RBAC permissions, workspaces might exist (abort GC)
 		// - Other errors: Network/API issues, can't determine safely (abort GC)
 		switch {
-		case apierrors.IsNotFound(err):
+		case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
 			gc.log.Debug("Namespaced Workspace CRD not installed, skipping")
 		case apierrors.IsForbidden(err):
 			gc.log.Debug("No RBAC permissions to list namespaced workspaces, aborting garbage collection")
@@ -167,10 +168,15 @@ func (gc *GarbageCollector) collect(ctx context.Context) error { //nolint:gocycl
 		}
 	}
 
-	// If we couldn't list any workspace types, skip cleanup to avoid
-	// accidentally deleting active workspace directories
+	// we reach this path IFF apiserver returned `NotFound` or `NoKindMatchError`
+	// for both List calls  of cluster-scoped and namespaced Workspace MRs,
+	// i.e. both APIs does not exist.
+	//
+	// This could potentially happen with a misconfigured
+	// ManagedResourceActivationPolicy that disabled both MR APIs.
+	// We avoid any GC here just to be safe.
 	if !listedAny {
-		gc.log.Debug("No Workspace MRs available, skipping garbage collection")
+		gc.log.Debug("No Workspace MR API available, skipping garbage collection")
 		return nil
 	}
 

@@ -18,8 +18,6 @@ package gc
 
 import (
 	"path/filepath"
-	"sync"
-	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/spf13/afero"
@@ -28,14 +26,7 @@ import (
 	"github.com/upbound/provider-terraform/internal/workdir"
 )
 
-var (
-	setupOnce sync.Once
-	setupErr  error
-)
-
 // Setup initializes and registers the garbage collectors with the manager.
-// This function uses sync.Once to ensure it only runs once, even if called multiple times
-// by different controllers (cluster-scoped and namespaced).
 //
 // Two GC instances are created:
 // - One for the main workspace directory containing workspace roots
@@ -44,36 +35,31 @@ var (
 // Each GC queries both cluster-scoped and namespaced workspaces to determine
 // which directories can be safely deleted.
 func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
-	setupOnce.Do(func() {
-		fs := afero.Afero{Fs: afero.NewOsFs()}
+	fs := afero.Afero{Fs: afero.NewOsFs()}
 
-		// GC for main workspace directory
-		gcWorkspace := workdir.NewGarbageCollector(
-			mgr.GetClient(),
-			tfDir,
-			workdir.WithFs(fs),
-			workdir.WithLogger(logger),
-			workdir.WithInterval(30*time.Second),
-		)
-		if err := mgr.Add(gcWorkspace); err != nil {
-			setupErr = err
-			return
-		}
+	// GC for main workspace directory
+	gcWorkspace := workdir.NewGarbageCollector(
+		mgr.GetClient(),
+		tfDir,
+		workdir.WithFs(fs),
+		workdir.WithLogger(logger),
+	)
+	if err := mgr.Add(gcWorkspace); err != nil {
+		return err
+	}
 
-		// GC for temporary workspace directory
-		gcTmp := workdir.NewGarbageCollector(
-			mgr.GetClient(),
-			filepath.Join("/tmp", tfDir),
-			workdir.WithFs(fs),
-			workdir.WithLogger(logger),
-		)
-		if err := mgr.Add(gcTmp); err != nil {
-			setupErr = err
-			return
-		}
+	// GC for temporary workspace directory
+	gcTmp := workdir.NewGarbageCollector(
+		mgr.GetClient(),
+		filepath.Join("/tmp", tfDir),
+		workdir.WithFs(fs),
+		workdir.WithLogger(logger),
+	)
+	if err := mgr.Add(gcTmp); err != nil {
+		return err
+	}
 
-		logger.Debug("Workspace garbage collectors initialized successfully")
-	})
+	logger.Debug("Workspace garbage collectors initialized successfully")
 
-	return setupErr
+	return nil
 }
