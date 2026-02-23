@@ -26,13 +26,16 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 
-	"github.com/upbound/provider-terraform/apis/cluster/v1beta1"
+	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
+	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 )
 
 func withDirs(fs afero.Afero, dir ...string) afero.Afero {
@@ -89,7 +92,10 @@ func TestCollect(t *testing.T) {
 		"NoOp": {
 			reason: "Garbage collection should succeed when there are no workspaces or workdirs.",
 			fields: fields{
-				kube:       &test.MockClient{MockList: test.NewMockListFn(nil)},
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					// Return empty lists for both workspace types
+					return nil
+				})},
 				parentdDir: parentDir,
 				fs:         withDirs(afero.Afero{Fs: afero.NewMemMapFs()}, parentDir),
 			},
@@ -101,10 +107,17 @@ func TestCollect(t *testing.T) {
 			reason: "Workdirs belonging to workspaces that no longer exist should be successfully garbage collected.",
 			fields: fields{
 				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
-					*obj.(*v1beta1.WorkspaceList) = v1beta1.WorkspaceList{Items: []v1beta1.Workspace{
-						{ObjectMeta: metav1.ObjectMeta{UID: types.UID("8371dd9e-dd3f-4a42-bd8c-340c4744f6de")}},
-						{ObjectMeta: metav1.ObjectMeta{UID: types.UID("ebaac629-43a3-4b39-8138-d7ac19cafe11")}},
-					}}
+					// Handle both cluster and namespaced workspace lists
+					switch v := obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						*v = clusterv1beta1.WorkspaceList{Items: []clusterv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{UID: types.UID("8371dd9e-dd3f-4a42-bd8c-340c4744f6de")}},
+						}}
+					case *namespacedv1beta1.WorkspaceList:
+						*v = namespacedv1beta1.WorkspaceList{Items: []namespacedv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{UID: types.UID("ebaac629-43a3-4b39-8138-d7ac19cafe11")}},
+						}}
+					}
 					return nil
 				})},
 				parentdDir: parentDir,
@@ -121,12 +134,154 @@ func TestCollect(t *testing.T) {
 				dirs: []string{"8371dd9e-dd3f-4a42-bd8c-340c4744f6de", "ebaac629-43a3-4b39-8138-d7ac19cafe11", "helm", "registry.terraform.io"},
 			},
 		},
+		"ClusterCRDNotFound": {
+			reason: "GC should continue when cluster CRD not found (404), deleting orphaned dirs but protecting namespaced workspaces.",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch v := obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						// Return 404 for cluster workspaces
+						return apierrors.NewNotFound(schema.GroupResource{Group: "tf.upbound.io", Resource: "workspaces"}, "")
+					case *namespacedv1beta1.WorkspaceList:
+						*v = namespacedv1beta1.WorkspaceList{Items: []namespacedv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{UID: types.UID("aaaa0000-0000-0000-0000-000000000001")}},
+						}}
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "aaaa0000-0000-0000-0000-000000000001"),
+					filepath.Join(parentDir, "bbbb0000-0000-0000-0000-000000000002"),
+				),
+			},
+			want: want{
+				dirs: []string{"aaaa0000-0000-0000-0000-000000000001"},
+			},
+		},
+		"NamespacedCRDNotFound": {
+			reason: "GC should continue when namespaced CRD not found (404), deleting orphaned dirs but protecting cluster workspaces.",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch v := obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						*v = clusterv1beta1.WorkspaceList{Items: []clusterv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cccc0000-0000-0000-0000-000000000003")}},
+						}}
+					case *namespacedv1beta1.WorkspaceList:
+						// Return 404 for namespaced workspaces
+						return apierrors.NewNotFound(schema.GroupResource{Group: "tf.upbound.io", Resource: "workspaces"}, "")
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "cccc0000-0000-0000-0000-000000000003"),
+					filepath.Join(parentDir, "dddd0000-0000-0000-0000-000000000004"),
+				),
+			},
+			want: want{
+				dirs: []string{"cccc0000-0000-0000-0000-000000000003"},
+			},
+		},
+		"BothCRDsNotFound": {
+			reason: "GC should skip cleanup when both CRDs not found (404).",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					// Return 404 for both workspace types
+					return apierrors.NewNotFound(schema.GroupResource{Group: "tf.upbound.io", Resource: "workspaces"}, "")
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "some-workspace-uid"),
+				),
+			},
+			want: want{
+				dirs: []string{"some-workspace-uid"},
+				err:  nil,
+			},
+		},
+		"ClusterForbidden": {
+			reason: "GC should abort when cluster workspaces forbidden (403).",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						// Return 403 for cluster workspaces
+						return apierrors.NewForbidden(schema.GroupResource{Group: "tf.upbound.io", Resource: "workspaces"}, "", errors.New("forbidden"))
+					case *namespacedv1beta1.WorkspaceList:
+						return nil
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "some-workspace-uid"),
+				),
+			},
+			want: want{
+				dirs: []string{"some-workspace-uid"},
+				err:  apierrors.NewForbidden(schema.GroupResource{Group: "tf.upbound.io", Resource: "workspaces"}, "", errors.New("forbidden")),
+			},
+		},
+		"NamespacedForbidden": {
+			reason: "GC should abort when namespaced workspaces forbidden (403).",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						return nil
+					case *namespacedv1beta1.WorkspaceList:
+						// Return 403 for namespaced workspaces
+						return apierrors.NewForbidden(schema.GroupResource{Group: "tf.m.upbound.io", Resource: "workspaces"}, "", errors.New("forbidden"))
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "some-workspace-uid"),
+				),
+			},
+			want: want{
+				dirs: []string{"some-workspace-uid"},
+				err:  apierrors.NewForbidden(schema.GroupResource{Group: "tf.m.upbound.io", Resource: "workspaces"}, "", errors.New("forbidden")),
+			},
+		},
+		"OtherAPIError": {
+			reason: "GC should abort on other API errors (network issues, etc.).",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						// Return generic error (simulating network issue)
+						return errors.New("connection refused")
+					case *namespacedv1beta1.WorkspaceList:
+						return nil
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "some-workspace-uid"),
+				),
+			},
+			want: want{
+				dirs: []string{"some-workspace-uid"},
+				err:  errors.New("connection refused"),
+			},
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			gc := NewGarbageCollector(tc.fields.kube, tc.fields.parentdDir, WithFs(tc.fields.fs))
-			err := gc.collect(tc.args.ctx, false)
+			err := gc.collect(tc.args.ctx)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("gc.collect(...): -want error, +got error:\n%s", diff)
 			}

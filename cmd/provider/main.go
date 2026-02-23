@@ -57,6 +57,8 @@ import (
 	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 	"github.com/upbound/provider-terraform/internal/bootcheck"
 	clusterworkspace "github.com/upbound/provider-terraform/internal/controller/cluster"
+	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
+	"github.com/upbound/provider-terraform/internal/controller/gc"
 	namespacedworkspace "github.com/upbound/provider-terraform/internal/controller/namespaced"
 	"github.com/upbound/provider-terraform/internal/features"
 )
@@ -189,6 +191,9 @@ func main() {
 		namespacedOpts.ChangeLogOptions = &clo
 	}
 
+	// NOTE: cluster-scoped and namespaced Workspaces share a common
+	// workspace root directory. Update GC setup if they diverge
+	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log), "cannot setup Workspace garbage collector controller")
 	canSafeStart, err := canWatchCRD(ctx, mgr)
 	kingpin.FatalIfError(err, "SafeStart precheck failed")
 	if canSafeStart {
