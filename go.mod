@@ -5,7 +5,6 @@ go 1.24.11
 tool golang.org/x/tools/cmd/goimports
 
 require (
-	github.com/MakeNowJust/heredoc v1.0.0
 	github.com/MakeNowJust/heredoc/v2 v2.0.1
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/crossplane/crossplane-runtime/v2 v2.0.0
