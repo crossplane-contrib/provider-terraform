@@ -1,6 +1,6 @@
 module github.com/upbound/provider-terraform
 
-go 1.24.11
+go 1.25.7
 
 tool golang.org/x/tools/cmd/goimports
 
