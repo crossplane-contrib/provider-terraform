@@ -34,6 +34,10 @@ import (
 	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 )
 
+// ShardLabel is the label key used to assign workspaces to shards for
+// horizontal scaling.
+const ShardLabel = "terraform.crossplane.io/shard"
+
 // Error strings.
 const (
 	errListWorkspaces = "cannot list workspaces"
@@ -48,6 +52,7 @@ type GarbageCollector struct {
 	fs        afero.Afero
 	interval  time.Duration
 	log       logging.Logger
+	shardName string
 }
 
 // A GarbageCollectorOption configures a new GarbageCollector.
@@ -69,6 +74,14 @@ func WithInterval(i time.Duration) GarbageCollectorOption {
 // logger never emits logs.
 func WithLogger(l logging.Logger) GarbageCollectorOption {
 	return func(gc *GarbageCollector) { gc.log = l }
+}
+
+// WithShardName stores the shard name for logging purposes. The GC always
+// lists ALL workspaces (regardless of shard) to safely determine which
+// directories can be deleted — it only removes directories for workspaces
+// that no longer exist in any shard.
+func WithShardName(name string) GarbageCollectorOption {
+	return func(gc *GarbageCollector) { gc.shardName = name }
 }
 
 // NewGarbageCollector returns a garbage collector that garbage collects the
@@ -114,9 +127,15 @@ func isUUID(u string) bool {
 }
 
 func (gc *GarbageCollector) collect(ctx context.Context) error { //nolint:gocyclo // easier to follow as a unit
-	gc.log.Debug("Running workspace garbage collection", "dir", gc.parentDir)
+	gc.log.Debug("Running workspace garbage collection", "dir", gc.parentDir, "shard", gc.shardName)
 	exists := map[string]bool{}
 	listedAny := false
+
+	// NOTE: The GC always lists ALL workspaces without shard filtering.
+	// Even in sharded mode, we need the complete set of existing workspace
+	// UIDs to safely determine which directories can be deleted. Filtering
+	// by shard here could cause one shard's GC to delete directories that
+	// belong to workspaces managed by another shard.
 
 	// List cluster-scoped workspaces
 	// Note: CRD may not be available if CRD gating is enabled and CRD not installed
