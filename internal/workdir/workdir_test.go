@@ -294,3 +294,136 @@ func TestCollect(t *testing.T) {
 	}
 
 }
+
+func TestCollectWithShardName(t *testing.T) {
+	parentDir := "/test"
+
+	type fields struct {
+		kube       client.Client
+		parentdDir string
+		fs         afero.Afero
+		shardName  string
+	}
+	type args struct {
+		ctx context.Context
+	}
+	type want struct {
+		dirs []string
+		err  error
+	}
+	cases := map[string]struct {
+		reason string
+		fields fields
+		args   args
+		want   want
+	}{
+		"ShardedGCListsAllWorkspaces": {
+			reason: "When running in sharded mode, the GC should still list ALL workspaces and only delete directories for workspaces that no longer exist in any shard.",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch v := obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						// Return workspaces from multiple shards
+						*v = clusterv1beta1.WorkspaceList{Items: []clusterv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{
+								UID:    types.UID("aaaa0000-0000-0000-0000-000000000001"),
+								Labels: map[string]string{ShardLabel: "shard-0"},
+							}},
+							{ObjectMeta: metav1.ObjectMeta{
+								UID:    types.UID("bbbb0000-0000-0000-0000-000000000002"),
+								Labels: map[string]string{ShardLabel: "shard-1"},
+							}},
+						}}
+					case *namespacedv1beta1.WorkspaceList:
+						*v = namespacedv1beta1.WorkspaceList{}
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				shardName:  "shard-0",
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "aaaa0000-0000-0000-0000-000000000001"), // shard-0 workspace
+					filepath.Join(parentDir, "bbbb0000-0000-0000-0000-000000000002"), // shard-1 workspace
+					filepath.Join(parentDir, "cccc0000-0000-0000-0000-000000000003"), // deleted workspace
+				),
+			},
+			want: want{
+				// Both shard-0 and shard-1 directories are preserved.
+				// Only the deleted workspace (cccc...) is cleaned up.
+				dirs: []string{
+					"aaaa0000-0000-0000-0000-000000000001",
+					"bbbb0000-0000-0000-0000-000000000002",
+				},
+			},
+		},
+		"ShardedGCPreservesOtherShardDirs": {
+			reason: "When running in sharded mode, the GC should NOT delete directories for workspaces from other shards.",
+			fields: fields{
+				kube: &test.MockClient{MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+					switch v := obj.(type) {
+					case *clusterv1beta1.WorkspaceList:
+						*v = clusterv1beta1.WorkspaceList{Items: []clusterv1beta1.Workspace{
+							{ObjectMeta: metav1.ObjectMeta{
+								UID:    types.UID("aaaa0000-0000-0000-0000-000000000001"),
+								Labels: map[string]string{ShardLabel: "shard-0"},
+							}},
+							{ObjectMeta: metav1.ObjectMeta{
+								UID:    types.UID("bbbb0000-0000-0000-0000-000000000002"),
+								Labels: map[string]string{ShardLabel: "shard-1"},
+							}},
+						}}
+					case *namespacedv1beta1.WorkspaceList:
+						*v = namespacedv1beta1.WorkspaceList{}
+					}
+					return nil
+				})},
+				parentdDir: parentDir,
+				shardName:  "shard-1",
+				fs: withDirs(afero.Afero{Fs: afero.NewMemMapFs()},
+					parentDir,
+					filepath.Join(parentDir, "aaaa0000-0000-0000-0000-000000000001"), // shard-0
+					filepath.Join(parentDir, "bbbb0000-0000-0000-0000-000000000002"), // shard-1
+				),
+			},
+			want: want{
+				// Both directories should be preserved because both workspaces still exist
+				dirs: []string{
+					"aaaa0000-0000-0000-0000-000000000001",
+					"bbbb0000-0000-0000-0000-000000000002",
+				},
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			gc := NewGarbageCollector(tc.fields.kube, tc.fields.parentdDir,
+				WithFs(tc.fields.fs),
+				WithShardName(tc.fields.shardName),
+			)
+			err := gc.collect(tc.args.ctx)
+			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
+				t.Errorf("gc.collect(...): -want error, +got error:\n%s", diff)
+			}
+
+			got := getDirs(tc.fields.fs, tc.fields.parentdDir)
+			if diff := cmp.Diff(tc.want.dirs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("gc.collect(...): -want dirs, +got dirs:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestWithShardName(t *testing.T) {
+	gc := NewGarbageCollector(nil, "/test", WithShardName("my-shard"))
+	if gc.shardName != "my-shard" {
+		t.Errorf("WithShardName: expected shardName %q, got %q", "my-shard", gc.shardName)
+	}
+}
+
+func TestShardLabel(t *testing.T) {
+	if ShardLabel != "terraform.crossplane.io/shard" {
+		t.Errorf("ShardLabel: expected %q, got %q", "terraform.crossplane.io/shard", ShardLabel)
+	}
+}

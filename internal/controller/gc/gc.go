@@ -34,15 +34,26 @@ import (
 //
 // Each GC queries both cluster-scoped and namespaced workspaces to determine
 // which directories can be safely deleted.
-func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
+//
+// When shardName is non-empty, the GC only considers workspaces labeled with
+// the matching shard label. This prevents one shard's GC from cleaning up
+// directories that belong to workspaces managed by another shard.
+func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger, shardName string) error {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
+
+	gcOpts := []workdir.GarbageCollectorOption{
+		workdir.WithFs(fs),
+		workdir.WithLogger(logger),
+	}
+	if shardName != "" {
+		gcOpts = append(gcOpts, workdir.WithShardName(shardName))
+	}
 
 	// GC for main workspace directory
 	gcWorkspace := workdir.NewGarbageCollector(
 		mgr.GetClient(),
 		tfDir,
-		workdir.WithFs(fs),
-		workdir.WithLogger(logger),
+		gcOpts...,
 	)
 	if err := mgr.Add(gcWorkspace); err != nil {
 		return err
@@ -52,14 +63,13 @@ func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
 	gcTmp := workdir.NewGarbageCollector(
 		mgr.GetClient(),
 		filepath.Join("/tmp", tfDir),
-		workdir.WithFs(fs),
-		workdir.WithLogger(logger),
+		gcOpts...,
 	)
 	if err := mgr.Add(gcTmp); err != nil {
 		return err
 	}
 
-	logger.Debug("Workspace garbage collectors initialized successfully")
+	logger.Debug("Workspace garbage collectors initialized successfully", "shard-name", shardName)
 
 	return nil
 }
