@@ -38,13 +38,18 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
@@ -54,7 +59,9 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
+	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
 	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
+	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 	"github.com/upbound/provider-terraform/internal/bootcheck"
 	clusterworkspace "github.com/upbound/provider-terraform/internal/controller/cluster"
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
@@ -85,6 +92,7 @@ func main() {
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
 		changelogsSocketPath     = app.Flag("changelogs-socket-path", "Path for changelogs socket (if enabled)").Default("/var/run/changelogs/changelogs.sock").Envar("CHANGELOGS_SOCKET_PATH").String()
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
+		shardName                = app.Flag("shard-name", "When set, this controller instance only reconciles Workspaces labeled with terraform.crossplane.io/shard=<shard-name>. Used for horizontal scaling by running multiple controller replicas, each handling a subset of workspaces.").Default("").Envar("SHARD_NAME").String()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -107,15 +115,62 @@ func main() {
 		"sync-period", syncInterval.String(),
 		"poll-interval", pollInterval.String(),
 		"poll-jitter", pollJitter.String(),
-		"max-reconcile-rate", *maxReconcileRate)
+		"max-reconcile-rate", *maxReconcileRate,
+		"shard-name", *shardName)
+
+	if *shardName != "" {
+		log.Info("Horizontal scaling enabled: this instance will only reconcile Workspaces with label terraform.crossplane.io/shard=" + *shardName)
+	}
 
 	cfg, err := ctrl.GetConfig()
 	kingpin.FatalIfError(err, "Cannot get API server rest config")
 
+	// Register all schemes before creating the manager. This is required
+	// because the cache ByObject configuration (used for shard filtering)
+	// needs the types to be registered in the scheme when the manager
+	// starts up to determine if they are namespaced or cluster-scoped.
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	kingpin.FatalIfError(apiscluster.AddToScheme(scheme), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(apisnamespaced.AddToScheme(scheme), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(sourcev1.AddToScheme(scheme), "Cannot add flux gitrepository APIs to scheme")
+	kingpin.FatalIfError(sourcev1beta2.AddToScheme(scheme), "Cannot add flux ocirepository APIs to scheme")
+	kingpin.FatalIfError(apiextensionsv1.AddToScheme(scheme), "Cannot register k8s apiextensions APIs to scheme")
+
+	cacheOpts := cache.Options{
+		SyncPeriod: syncInterval,
+	}
+
+	// When running in sharded mode, configure the cache to only watch
+	// Workspace resources that match this shard's label. This ensures each
+	// controller instance only receives events for its assigned workspaces,
+	// enabling true horizontal scaling.
+	if *shardName != "" {
+		shardSelector := labels.SelectorFromSet(labels.Set{
+			"terraform.crossplane.io/shard": *shardName,
+		})
+
+		cacheOpts.ByObject = map[client.Object]cache.ByObject{
+			&clusterv1beta1.Workspace{}:    {Label: shardSelector},
+			&namespacedv1beta1.Workspace{}: {Label: shardSelector},
+		}
+
+		log.Debug("Cache configured with shard label selector",
+			"selector", shardSelector.String())
+	}
+
+	// When running in sharded mode, each shard gets its own leader election
+	// lease so multiple shards can be active simultaneously. This enables
+	// true horizontal scaling — each shard has one active leader handling
+	// its subset of workspaces.
+	leaderElectionID := "crossplane-leader-election-provider-terraform"
+	if *shardName != "" {
+		leaderElectionID = "crossplane-leader-election-provider-terraform-" + *shardName
+	}
+
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
-		Cache: cache.Options{
-			SyncPeriod: syncInterval,
-		},
+		Scheme: scheme,
+		Cache:  cacheOpts,
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
 		// election by default. Leases expire after 15 seconds, with a
@@ -125,18 +180,12 @@ func main() {
 		// server. Switching to Leases only and longer leases appears to
 		// alleviate this.
 		LeaderElection:             *leaderElection,
-		LeaderElectionID:           "crossplane-leader-election-provider-terraform",
+		LeaderElectionID:           leaderElectionID,
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		LeaseDuration:              func() *time.Duration { d := 60 * time.Second; return &d }(),
 		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
-
-	kingpin.FatalIfError(apiscluster.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(apisnamespaced.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(sourcev1.AddToScheme(mgr.GetScheme()), "Cannot add flux gitrepository APIs to scheme")
-	kingpin.FatalIfError(sourcev1beta2.AddToScheme(mgr.GetScheme()), "Cannot add flux ocirepository APIs to scheme")
-	kingpin.FatalIfError(apiextensionsv1.AddToScheme(mgr.GetScheme()), "Cannot register k8s apiextensions APIs to scheme")
 
 	metricRecorder := managed.NewMRMetricRecorder()
 	stateMetrics := statemetrics.NewMRStateMetrics()
@@ -192,8 +241,10 @@ func main() {
 	}
 
 	// NOTE: cluster-scoped and namespaced Workspaces share a common
-	// workspace root directory. Update GC setup if they diverge
-	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log), "cannot setup Workspace garbage collector controller")
+	// workspace root directory. Update GC setup if they diverge.
+	// When running in sharded mode, GC only cleans up directories for
+	// workspaces that belong to this shard.
+	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log, *shardName), "cannot setup Workspace garbage collector controller")
 	canSafeStart, err := canWatchCRD(ctx, mgr)
 	kingpin.FatalIfError(err, "SafeStart precheck failed")
 	if canSafeStart {
