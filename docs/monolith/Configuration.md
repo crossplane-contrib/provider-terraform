@@ -377,3 +377,75 @@ spec:
 ```
 
 - `enableTerraformCLILogging`: Specifies whether logging is enabled (`true`) or disabled (`false`). When enabled, Terraform CLI command output will be written to the container logs. Default is `false`
+
+## Horizontal Scaling: Sharding Workspaces Across Instances
+
+A single provider-terraform pod reconciles every `Workspace` it can see. When the number of Workspaces on a cluster grows large enough that one pod's `terraform` throughput becomes the bottleneck, you can run **N instances** of the provider, each watching a disjoint subset ("shard") of Workspaces. Every instance is the same binary, deployed as a separate `Provider`/`ControllerConfig` (or equivalent) with different flag values — there is no separate "sharding" binary or CRD.
+
+All three flags below default to today's single-instance behavior, so an existing deployment is unaffected until you opt in.
+
+### `--watch-label-selector`: partition Workspaces by label
+
+Restricts an instance's manager cache to only the Workspaces matching a label selector. A Workspace whose labels don't match never enters that instance's cache — it is structurally invisible, not filtered after the fact.
+
+```yaml
+apiVersion: pkg.crossplane.io/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: terraform-shard-1
+spec:
+  args:
+    - --watch-label-selector=sharding.gwcp.guidewire.com/shard=1
+```
+
+- **Default:** `""` (empty) — watch every Workspace, exactly like today.
+- **Assignment contract:** a Workspace is reconciled by instance `k` if and only if it carries the label `sharding.gwcp.guidewire.com/shard=k`. This label is additive and optional — it requires no change to the Workspace CRD schema.
+- **The default (catch-all) instance:** exactly one instance must be able to pick up Workspaces that carry no shard label at all (newly created, unlabeled, or a labeling bug), or those Workspaces are silently never reconciled by anyone. Kubernetes label selectors have **no `OR` operator**, so `shard==0 OR !shard` is not valid syntax. Use `notin` instead — it matches an absent label by definition:
+
+  ```
+  --watch-label-selector=sharding.gwcp.guidewire.com/shard notin (1,2,3)
+  ```
+
+  (listing every *other* shard value in the deployment). This selects Workspaces labeled `shard=0` **and** Workspaces with no `shard` label at all, in one expression.
+- Selector syntax accepts the full Kubernetes label selector grammar (`=`, `!=`, `in (...)`, `notin (...)`, `key`, `!key`); an invalid selector fails the provider at startup rather than at reconcile time.
+
+### `--leader-election-id`: give each instance its own leader lease
+
+```yaml
+    - --leader-election
+    - --leader-election-id=crossplane-leader-election-provider-terraform-shard-1
+```
+
+- **Default:** `crossplane-leader-election-provider-terraform` — today's hardcoded lease name.
+- **Why you must set this per instance:** the lease name has nothing to do with the Deployment's name. If two instances share a namespace and both leave this flag at its default (or set it to the same value), all of their pods race for **one** lease, and only one pod cluster-wide ever becomes leader. Every other instance's pods sit as permanent standbys with no leader, so their entire shard silently stops being reconciled — not degraded throughput, a total and silent outage for that shard.
+- **Deployment rule of thumb:** derive `--leader-election-id` from the *same* shard index used in `--watch-label-selector` (e.g. append `-shard-1` to both), so the two settings can never drift apart in your deployment templates.
+- Only matters when `--leader-election` (`-l`) is on with `replicas >= 2`; with a single replica per instance the ID is inert.
+
+### `--enable-ownership-claims` (optional): safe handover when a Workspace is relabeled
+
+When a Workspace's shard label changes while a `terraform apply` is still running on the old instance, a bare relabel is already safe by default (no destroy is triggered, and the Terraform state lock serializes any overlap) — this flag is **optional polish**, not a correctness requirement. Turning it on adds:
+
+1. **Noise suppression** — the incoming instance backs off quietly instead of repeatedly failing against the held state lock during the handover window.
+2. **Automated crash recovery** — if the old owner crashed mid-apply, the new owner automatically runs `terraform force-unlock` once the old claim goes stale, instead of requiring a manual runbook.
+
+```yaml
+    - --enable-ownership-claims
+    - --ownership-claim-ttl=90s
+    - --ownership-heartbeat-interval=30s
+```
+
+- `--enable-ownership-claims`: default `false`. Off = identical to today's behavior.
+- `--ownership-claim-ttl`: how long a claim's heartbeat may go stale before another instance is allowed to steal it. Default `90s`.
+- `--ownership-heartbeat-interval`: how often the current owner refreshes its claim while `terraform` is running. Default `30s`.
+- **Requires downward-API wiring:** the provider resolves its own identity from `$POD_NAME` (falls back to hostname, then to `--leader-election-id`) and its claim namespace from `$POD_NAMESPACE` (falls back to the in-cluster service account namespace). If you enable this flag, set both env vars via the pod's downward API:
+
+  ```yaml
+  env:
+    - name: POD_NAME
+      valueFrom: { fieldRef: { fieldPath: metadata.name } }
+    - name: POD_NAMESPACE
+      valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+  ```
+
+  The provider fails fast at startup if `--enable-ownership-claims` is set and no namespace can be resolved.
+- **RBAC:** the provider's ServiceAccount needs `get`, `list`, `watch`, `create`, `update`, `delete` on `leases.coordination.k8s.io` wherever this flag is enabled (claims are stored in a dedicated `Lease` per Workspace, separate from the leader-election lease).
