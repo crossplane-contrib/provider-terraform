@@ -21,6 +21,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -60,6 +61,7 @@ import (
 	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 	"github.com/upbound/provider-terraform/internal/bootcheck"
+	"github.com/upbound/provider-terraform/internal/claims"
 	clusterworkspace "github.com/upbound/provider-terraform/internal/controller/cluster"
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
 	"github.com/upbound/provider-terraform/internal/controller/gc"
@@ -96,11 +98,26 @@ func main() {
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
 		changelogsSocketPath     = app.Flag("changelogs-socket-path", "Path for changelogs socket (if enabled)").Default("/var/run/changelogs/changelogs.sock").Envar("CHANGELOGS_SOCKET_PATH").String()
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
+		enableOwnershipClaims    = app.Flag("enable-ownership-claims", "Guard every Terraform run with a per-Workspace ownership claim, for safe handover when a Workspace is relabeled between instances. Optional -- see design doc §5.4.").Default("false").Envar("ENABLE_OWNERSHIP_CLAIMS").Bool()
+		ownershipClaimTTL        = app.Flag("ownership-claim-ttl", "How long an ownership claim's heartbeat may go stale before another instance may steal it.").Default("90s").Envar("OWNERSHIP_CLAIM_TTL").Duration()
+		ownershipHeartbeat       = app.Flag("ownership-heartbeat-interval", "How often a held ownership claim's heartbeat is renewed while Terraform is running.").Default("30s").Envar("OWNERSHIP_HEARTBEAT_INTERVAL").Duration()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
 	workspaceCache, err := workspaceCacheByObject(*watchLabelSelector)
 	kingpin.FatalIfError(err, "Cannot parse --watch-label-selector value %q", *watchLabelSelector)
+
+	holderIdentity, claimNamespace := resolveClaimIdentity(*leaderElectionID)
+	if *enableOwnershipClaims && claimNamespace == "" {
+		kingpin.Fatalf("Cannot resolve this instance's namespace for --enable-ownership-claims: set $POD_NAMESPACE via the pod's downward API, or run in-cluster")
+	}
+	claimCfg := claims.Config{
+		Enabled:           *enableOwnershipClaims,
+		TTL:               *ownershipClaimTTL,
+		HeartbeatInterval: *ownershipHeartbeat,
+		HolderIdentity:    holderIdentity,
+		Namespace:         claimNamespace,
+	}
 
 	var logEncoder zap.Opts
 	switch *logEncoding {
@@ -216,12 +233,12 @@ func main() {
 		clusterOpts.Gate = crdGate
 		namespacedOpts.Gate = crdGate
 		kingpin.FatalIfError(customresourcesgate.Setup(mgr, namespacedOpts), "Cannot setup CRD gate")
-		kingpin.FatalIfError(clusterworkspace.SetupGated(mgr, clusterOpts, *timeout, *pollJitter), "Cannot setup cluster-scoped Workspace controllers")
-		kingpin.FatalIfError(namespacedworkspace.SetupGated(mgr, namespacedOpts, *timeout, *pollJitter), "Cannot setup namespaced Workspace controllers")
+		kingpin.FatalIfError(clusterworkspace.SetupGated(mgr, clusterOpts, *timeout, *pollJitter, claimCfg), "Cannot setup cluster-scoped Workspace controllers")
+		kingpin.FatalIfError(namespacedworkspace.SetupGated(mgr, namespacedOpts, *timeout, *pollJitter, claimCfg), "Cannot setup namespaced Workspace controllers")
 	} else {
 		log.Info("Provider has missing RBAC permissions for watching CRDs, controller SafeStart capability will be disabled")
-		kingpin.FatalIfError(clusterworkspace.Setup(mgr, clusterOpts, *timeout, *pollJitter), "Cannot setup cluster-scoped Workspace controllers")
-		kingpin.FatalIfError(namespacedworkspace.Setup(mgr, namespacedOpts, *timeout, *pollJitter), "Cannot setup namespaced Workspace controllers")
+		kingpin.FatalIfError(clusterworkspace.Setup(mgr, clusterOpts, *timeout, *pollJitter, claimCfg), "Cannot setup cluster-scoped Workspace controllers")
+		kingpin.FatalIfError(namespacedworkspace.Setup(mgr, namespacedOpts, *timeout, *pollJitter, claimCfg), "Cannot setup namespaced Workspace controllers")
 	}
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
 }
@@ -244,6 +261,44 @@ func workspaceCacheByObject(selector string) (map[client.Object]cache.ByObject, 
 		&clusterv1beta1.Workspace{}:    {Label: sel},
 		&namespacedv1beta1.Workspace{}: {Label: sel},
 	}, nil
+}
+
+// inClusterNamespacePath is where a pod's own namespace is projected by the
+// service account token volume -- the same source controller-runtime itself
+// reads for LeaderElectionNamespace when that option is left unset.
+const inClusterNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// resolveClaimIdentity determines this instance's ownership-claim holder
+// identity and the namespace its claim Leases for *cluster-scoped*
+// Workspaces live in (namespaced Workspaces' claims live in their own
+// namespace instead -- see claims.Config.Namespace).
+//
+// HolderIdentity precedence: $POD_NAME (downward API) > hostname >
+// leaderElectionID. The last resort falls back to the lease ID rather than
+// an empty string because --leader-election-id is already required to be
+// unique per instance (TD-2), which makes it a reasonable identity when no
+// pod identity is available (e.g. running outside a pod).
+//
+// Namespace precedence: $POD_NAMESPACE (downward API) > the in-cluster
+// service account namespace file.
+func resolveClaimIdentity(leaderElectionID string) (holderIdentity, namespace string) {
+	holderIdentity = os.Getenv("POD_NAME")
+	if holderIdentity == "" {
+		if h, err := os.Hostname(); err == nil && h != "" {
+			holderIdentity = h
+		}
+	}
+	if holderIdentity == "" {
+		holderIdentity = leaderElectionID
+	}
+
+	namespace = os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		if b, err := os.ReadFile(inClusterNamespacePath); err == nil {
+			namespace = strings.TrimSpace(string(b))
+		}
+	}
+	return holderIdentity, namespace
 }
 
 // UseISO8601 sets the logger to use ISO8601 timestamp format

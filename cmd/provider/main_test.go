@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -167,4 +168,44 @@ func TestWorkspaceCacheByObjectDefaultShardCatchAll(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveClaimIdentity(t *testing.T) {
+	t.Run("PodNameEnvTakesPrecedence", func(t *testing.T) {
+		t.Setenv("POD_NAME", "provider-terraform-shard-1-abc123")
+		holder, _ := resolveClaimIdentity("fallback-lease-id")
+		if holder != "provider-terraform-shard-1-abc123" {
+			t.Errorf("holderIdentity = %q, want %q", holder, "provider-terraform-shard-1-abc123")
+		}
+	})
+
+	t.Run("HolderIdentityNeverEmpty", func(t *testing.T) {
+		// Can't portably force os.Hostname() to fail, but the documented
+		// precedence guarantees a non-empty result either way: hostname, or
+		// (as a last resort) the caller-supplied leaderElectionID.
+		t.Setenv("POD_NAME", "")
+		holder, _ := resolveClaimIdentity("fallback-lease-id")
+		if holder == "" {
+			t.Error("holderIdentity should never be empty")
+		}
+	})
+
+	t.Run("PodNamespaceEnvTakesPrecedence", func(t *testing.T) {
+		t.Setenv("POD_NAMESPACE", "tenant-a")
+		_, ns := resolveClaimIdentity("fallback-lease-id")
+		if ns != "tenant-a" {
+			t.Errorf("namespace = %q, want %q", ns, "tenant-a")
+		}
+	})
+
+	t.Run("EmptyNamespaceWhenNotInCluster", func(t *testing.T) {
+		t.Setenv("POD_NAMESPACE", "")
+		if _, err := os.Stat(inClusterNamespacePath); err == nil {
+			t.Skip("running somewhere with an in-cluster namespace file; precedence is already covered above")
+		}
+		_, ns := resolveClaimIdentity("fallback-lease-id")
+		if ns != "" {
+			t.Errorf("namespace = %q, want empty (not running in-cluster, no override set)", ns)
+		}
+	})
 }
