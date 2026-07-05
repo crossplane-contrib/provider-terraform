@@ -38,7 +38,9 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -54,7 +56,9 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
+	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
 	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
+	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 	"github.com/upbound/provider-terraform/internal/bootcheck"
 	clusterworkspace "github.com/upbound/provider-terraform/internal/controller/cluster"
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
@@ -70,6 +74,11 @@ func init() {
 	}
 }
 
+// defaultLeaderElectionID is today's hardcoded lease name, predating the
+// --leader-election-id flag. A deployment that leaves the flag unset must
+// keep getting exactly this value (Req 1.4 parity).
+const defaultLeaderElectionID = "crossplane-leader-election-provider-terraform"
+
 func main() {
 	var (
 		app                      = kingpin.New(filepath.Base(os.Args[0]), "Terraform support for Crossplane.").DefaultEnvars()
@@ -80,6 +89,8 @@ func main() {
 		pollJitter               = app.Flag("poll-jitter", "If non-zero, varies the poll interval by a random amount up to plus-or-minus this value.").Default("1m").Duration()
 		timeout                  = app.Flag("timeout", "Controls how long Terraform processes may run before they are killed.").Default("20m").Duration()
 		leaderElection           = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").Envar("LEADER_ELECTION").Bool()
+		leaderElectionID         = app.Flag("leader-election-id", "Name of the leader election lease. Set a distinct value per instance so leaders of different instances run concurrently.").Default(defaultLeaderElectionID).Envar("LEADER_ELECTION_ID").String()
+		watchLabelSelector       = app.Flag("watch-label-selector", "Restrict the manager cache to Workspaces matching this label selector. Empty (default) watches all Workspaces.").Default("").Envar("WATCH_LABEL_SELECTOR").String()
 		maxReconcileRate         = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
 		enableManagementPolicies = app.Flag("enable-management-policies", "Enable support for Management Policies.").Default("true").Envar("ENABLE_MANAGEMENT_POLICIES").Bool()
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
@@ -87,6 +98,9 @@ func main() {
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
+
+	workspaceCache, err := workspaceCacheByObject(*watchLabelSelector)
+	kingpin.FatalIfError(err, "Cannot parse --watch-label-selector value %q", *watchLabelSelector)
 
 	var logEncoder zap.Opts
 	switch *logEncoding {
@@ -115,6 +129,7 @@ func main() {
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
 		Cache: cache.Options{
 			SyncPeriod: syncInterval,
+			ByObject:   workspaceCache,
 		},
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
@@ -125,7 +140,7 @@ func main() {
 		// server. Switching to Leases only and longer leases appears to
 		// alleviate this.
 		LeaderElection:             *leaderElection,
-		LeaderElectionID:           "crossplane-leader-election-provider-terraform",
+		LeaderElectionID:           *leaderElectionID,
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		LeaseDuration:              func() *time.Duration { d := 60 * time.Second; return &d }(),
 		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
@@ -209,6 +224,26 @@ func main() {
 		kingpin.FatalIfError(namespacedworkspace.Setup(mgr, namespacedOpts, *timeout, *pollJitter), "Cannot setup namespaced Workspace controllers")
 	}
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
+}
+
+// workspaceCacheByObject scopes the manager cache to Workspaces matching
+// selector, restricting *only* the cluster-scoped and namespaced Workspace
+// types. An empty selector returns a nil map, leaving the cache unrestricted
+// for every type (today's behavior). A non-empty selector must not be
+// applied via cache.Options.DefaultLabelSelector: that field filters every
+// cached type (ProviderConfigs, Secrets, Leases, CRDs), not just Workspaces.
+func workspaceCacheByObject(selector string) (map[client.Object]cache.ByObject, error) {
+	if selector == "" {
+		return nil, nil
+	}
+	sel, err := labels.Parse(selector)
+	if err != nil {
+		return nil, err
+	}
+	return map[client.Object]cache.ByObject{
+		&clusterv1beta1.Workspace{}:    {Label: sel},
+		&namespacedv1beta1.Workspace{}: {Label: sel},
+	}, nil
 }
 
 // UseISO8601 sets the logger to use ISO8601 timestamp format
