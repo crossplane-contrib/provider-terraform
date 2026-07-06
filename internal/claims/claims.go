@@ -143,6 +143,7 @@ func (m *Manager) Acquire(ctx context.Context, ws client.Object, ownerGVK schema
 		}
 		return Backoff, errors.Wrap(err, errUpdateLease)
 	}
+	//Signifies that the lease is acquired from another owner with a stale claim.
 	if foreign {
 		return Stolen, nil // R4
 	}

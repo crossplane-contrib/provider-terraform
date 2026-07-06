@@ -399,14 +399,17 @@ spec:
 ```
 
 - **Default:** `""` (empty) — watch every Workspace, exactly like today.
-- **Assignment contract:** a Workspace is reconciled by instance `k` if and only if it carries the label `sharding.gwcp.guidewire.com/shard=k`. This label is additive and optional — it requires no change to the Workspace CRD schema.
-- **The default (catch-all) instance:** exactly one instance must be able to pick up Workspaces that carry no shard label at all (newly created, unlabeled, or a labeling bug), or those Workspaces are silently never reconciled by anyone. Kubernetes label selectors have **no `OR` operator**, so `shard==0 OR !shard` is not valid syntax. Use `notin` instead — it matches an absent label by definition:
+- **At most one running instance may use this default.** An empty selector means *no filtering at all* — it watches every Workspace, including ones explicitly labeled for another shard. Leaving more than one instance at the default (or a flag simply omitted, which is identical to `""`), or leaving an old single-instance deployment's empty-selector instance running alongside a newly-added sharded fleet, means every empty-selector instance reconciles the *entire* Workspace set concurrently with whichever shard instances also match — full overlap on every Workspace, not a partial or edge-case one. This is the same failure class as leaving `--leader-election-id` at its default across instances (below); the provider can't detect it itself since no instance knows what selector any other instance is running — getting this right is a deployment-time responsibility, not something the binary enforces.
+- **Assignment contract:** a Workspace is reconciled by instance `k` if and only if it carries the label `sharding.gwcp.guidewire.com/shard=k`. Every shard instance uses a plain equality selector (`shard=1`, `shard=2`, ...). This label is additive and optional — it requires no change to the Workspace CRD schema.
+- **The default (catch-all) instance watches unlabelled Workspaces only — nothing else.** There is no "shard 0." A Workspace that carries the `shard` label — even if the value doesn't match any currently-running instance (a typo, a decommissioned shard) — is **not** picked up by the default instance. That's deliberate: an instance should only ever run `terraform` on Workspaces it was actually assigned, not absorb whatever nobody else claims. The default instance's selector is:
 
   ```
-  --watch-label-selector=sharding.gwcp.guidewire.com/shard notin (1,2,3)
+  --watch-label-selector=!sharding.gwcp.guidewire.com/shard
   ```
 
-  (listing every *other* shard value in the deployment). This selects Workspaces labeled `shard=0` **and** Workspaces with no `shard` label at all, in one expression.
+  `!key` (`DoesNotExist`) is standard Kubernetes selector syntax and matches only Workspaces where the label is **absent entirely**.
+- **`shard=""` is not the same as "no label" — do not use it.** The `DoesNotExist` check is pure key-presence: a Workspace labeled `shard=""` (key present, empty value) does **not** match `!shard`, and matches no real shard's equality selector either. It becomes an orphan — reconciled by nobody. If you need to represent "not yet assigned," omit the `shard` label entirely; never set it to an empty string.
+- **Operational consequence:** because a mislabeled or orphaned-shard Workspace is now deliberately left unpicked rather than silently absorbed, monitor for it explicitly — e.g. a periodic audit alerting on any Workspace whose `shard` label (including `shard=""`) doesn't match a currently-deployed instance's selector. A Workspace nobody is watching should be a loud signal, not a silent one.
 - Selector syntax accepts the full Kubernetes label selector grammar (`=`, `!=`, `in (...)`, `notin (...)`, `key`, `!key`); an invalid selector fails the provider at startup rather than at reconcile time.
 
 ### `--leader-election-id`: give each instance its own leader lease
@@ -448,4 +451,4 @@ When a Workspace's shard label changes while a `terraform apply` is still runnin
   ```
 
   The provider fails fast at startup if `--enable-ownership-claims` is set and no namespace can be resolved.
-- **RBAC:** the provider's ServiceAccount needs `get`, `list`, `watch`, `create`, `update`, `delete` on `leases.coordination.k8s.io` wherever this flag is enabled (claims are stored in a dedicated `Lease` per Workspace, separate from the leader-election lease).
+- **RBAC:** the provider's ServiceAccount needs `get`, `list`, `watch`, `create`, `update`, `delete` on `leases.coordination.k8s.io` wherever this flag is enabled (claims are stored in a dedicated `Lease` per Workspace, separate from the leader-election lease). **This must be a `ClusterRole`, not a namespace-scoped `Role`.** A cluster-scoped Workspace's claim Lease lives in the provider's own namespace, but a *namespaced* Workspace's claim lives in that Workspace's own (tenant) namespace — so the grant can't be limited to the provider's namespace alone; it needs to cover every namespace a namespaced Workspace could exist in.
