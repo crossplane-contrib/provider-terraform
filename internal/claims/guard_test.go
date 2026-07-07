@@ -40,7 +40,7 @@ func TestGuardDisabledIsPassthrough(t *testing.T) {
 		func(ctx context.Context) error { fnCalled = true; return nil },
 	)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Guard(...): unexpected error: %v", err)
 	}
 	if !fnCalled {
 		t.Error("fn was not called")
@@ -74,7 +74,7 @@ func TestGuardAcquiredRunsFnAndReleases(t *testing.T) {
 		func(ctx context.Context) error { fnCalled = true; return nil },
 	)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Guard(...): unexpected error: %v", err)
 	}
 	if !fnCalled {
 		t.Error("fn was not called")
@@ -128,7 +128,7 @@ func TestGuardStolenCallsUnlockThenFn(t *testing.T) {
 		func(ctx context.Context) error { order = append(order, "fn"); return nil },
 	)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Guard(...): unexpected error: %v", err)
 	}
 	if len(order) != 2 || order[0] != "unlock" || order[1] != "fn" {
 		t.Errorf("call order = %v, want [unlock fn]", order)
@@ -214,7 +214,7 @@ func TestGuardHeartbeatsWhileFnRuns(t *testing.T) {
 		func(ctx context.Context) error { time.Sleep(40 * time.Millisecond); return nil },
 	)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Guard(...): unexpected error: %v", err)
 	}
 	// The first Update acquires the claim and the last releases it;
 	// sleeping 8x the interval in between should yield at least one

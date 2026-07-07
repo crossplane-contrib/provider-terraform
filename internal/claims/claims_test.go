@@ -216,7 +216,7 @@ func TestAcquireSetsOwnerReference(t *testing.T) {
 
 	ws := testWorkspace("tenant-a")
 	if _, err := m.Acquire(context.Background(), ws, testGVK); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Acquire(...): unexpected error: %v", err)
 	}
 
 	if created == nil {
@@ -320,7 +320,7 @@ func TestRelease(t *testing.T) {
 						t.Errorf("HolderIdentity = %q, want cleared (nil)", *l.Spec.HolderIdentity)
 					}
 					if l.Spec.RenewTime != nil {
-						t.Error("RenewTime want cleared (nil)")
+						t.Errorf("RenewTime = %v, want cleared (nil)", l.Spec.RenewTime)
 					}
 					return nil
 				}),

@@ -395,16 +395,16 @@ metadata:
   name: terraform-shard-1
 spec:
   args:
-    - --watch-label-selector=sharding.gwcp.guidewire.com/shard=1
+    - --watch-label-selector=sharding.example.com/shard=1
 ```
 
 - **Default:** `""` (empty) — watch every Workspace, exactly like today.
 - **At most one running instance may use this default.** An empty selector means *no filtering at all* — it watches every Workspace, including ones explicitly labeled for another shard. Leaving more than one instance at the default (or a flag simply omitted, which is identical to `""`), or leaving an old single-instance deployment's empty-selector instance running alongside a newly-added sharded fleet, means every empty-selector instance reconciles the *entire* Workspace set concurrently with whichever shard instances also match — full overlap on every Workspace, not a partial or edge-case one. This is the same failure class as leaving `--leader-election-id` at its default across instances (below); the provider can't detect it itself since no instance knows what selector any other instance is running — getting this right is a deployment-time responsibility, not something the binary enforces.
-- **Assignment contract:** a Workspace is reconciled by instance `k` if and only if it carries the label `sharding.gwcp.guidewire.com/shard=k`. Every shard instance uses a plain equality selector (`shard=1`, `shard=2`, ...). This label is additive and optional — it requires no change to the Workspace CRD schema.
+- **Assignment contract:** a Workspace is reconciled by instance `k` if and only if it carries the label `sharding.example.com/shard=k`. Every shard instance uses a plain equality selector (`shard=1`, `shard=2`, ...). This label is additive and optional — it requires no change to the Workspace CRD schema.
 - **The default (catch-all) instance watches unlabelled Workspaces only — nothing else.** There is no "shard 0." A Workspace that carries the `shard` label — even if the value doesn't match any currently-running instance (a typo, a decommissioned shard) — is **not** picked up by the default instance. That's deliberate: an instance should only ever run `terraform` on Workspaces it was actually assigned, not absorb whatever nobody else claims. The default instance's selector is:
 
   ```
-  --watch-label-selector=!sharding.gwcp.guidewire.com/shard
+  --watch-label-selector=!sharding.example.com/shard
   ```
 
   `!key` (`DoesNotExist`) is standard Kubernetes selector syntax and matches only Workspaces where the label is **absent entirely**.

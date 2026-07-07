@@ -98,7 +98,7 @@ func main() {
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
 		changelogsSocketPath     = app.Flag("changelogs-socket-path", "Path for changelogs socket (if enabled)").Default("/var/run/changelogs/changelogs.sock").Envar("CHANGELOGS_SOCKET_PATH").String()
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
-		enableOwnershipClaims    = app.Flag("enable-ownership-claims", "Guard every Terraform run with a per-Workspace ownership claim, for safe handover when a Workspace is relabeled between instances. Optional -- see design doc §5.4.").Default("false").Envar("ENABLE_OWNERSHIP_CLAIMS").Bool()
+		enableOwnershipClaims    = app.Flag("enable-ownership-claims", "Guard every Terraform run with a per-Workspace ownership claim, for safe handover when a Workspace is relabeled between instances.").Default("false").Envar("ENABLE_OWNERSHIP_CLAIMS").Bool()
 		ownershipClaimTTL        = app.Flag("ownership-claim-ttl", "How long an ownership claim's heartbeat may go stale before another instance may steal it.").Default("90s").Envar("OWNERSHIP_CLAIM_TTL").Duration()
 		ownershipHeartbeat       = app.Flag("ownership-heartbeat-interval", "How often a held ownership claim's heartbeat is renewed while Terraform is running.").Default("30s").Envar("OWNERSHIP_HEARTBEAT_INTERVAL").Duration()
 	)

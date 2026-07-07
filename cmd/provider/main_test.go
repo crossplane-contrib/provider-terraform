@@ -39,7 +39,7 @@ func TestDefaultLeaderElectionID(t *testing.T) {
 	app := kingpin.New("test", "")
 	id := app.Flag("leader-election-id", "").Default(defaultLeaderElectionID).String()
 	if _, err := app.Parse(nil); err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
+		t.Fatalf("app.Parse(nil): unexpected error: %v", err)
 	}
 	if *id != want {
 		t.Errorf("parsed --leader-election-id default = %q, want %q", *id, want)
@@ -59,16 +59,16 @@ func TestWorkspaceCacheByObject(t *testing.T) {
 			wantNil:  true,
 		},
 		"ValidEquality": {
-			selector: "sharding.gwcp.guidewire.com/shard=1",
+			selector: "sharding.example.com/shard=1",
 		},
 		"ValidNegation": {
-			selector: "!sharding.gwcp.guidewire.com/shard",
+			selector: "!sharding.example.com/shard",
 		},
 		"ValidSetBasedIn": {
-			selector: "sharding.gwcp.guidewire.com/shard in (0,1)",
+			selector: "sharding.example.com/shard in (0,1)",
 		},
 		"ValidSetBasedNotIn": {
-			selector: "sharding.gwcp.guidewire.com/shard notin (1,2)",
+			selector: "sharding.example.com/shard notin (1,2)",
 		},
 		"InvalidSelectorSyntax": {
 			selector: "===bad===",
@@ -78,7 +78,7 @@ func TestWorkspaceCacheByObject(t *testing.T) {
 			// Kubernetes selectors have no OR combinator (see design doc
 			// TD-8 correction). Confirm it's rejected outright rather than
 			// silently accepted or misparsed.
-			selector: "sharding.gwcp.guidewire.com/shard==0 OR !sharding.gwcp.guidewire.com/shard",
+			selector: "sharding.example.com/shard==0 OR !sharding.example.com/shard",
 			wantErr:  true,
 		},
 	}
@@ -130,17 +130,15 @@ func TestWorkspaceCacheByObject(t *testing.T) {
 	}
 }
 
-// TestWorkspaceCacheByObjectDefaultShardCatchAll proves the corrected TD-8
-// default-instance selector: "shard notin (1,2,...,N)" matches shard=0 and
-// an absent label, and excludes every other shard. The design doc originally
-// described this as "shard==0 OR !shard", which is not valid Kubernetes
-// selector syntax -- Kubernetes selectors have no OR combinator. NotIn (and
-// != ) match an absent label by definition, which is what makes the
-// catch-all work.
+// TestWorkspaceCacheByObjectDefaultShardCatchAll proves the documented
+// default-instance selector "!shard" (DoesNotExist) matches only Workspaces
+// with no shard label at all. There is no "shard 0": any Workspace carrying
+// the label -- including shard=0 or the empty string "" -- is excluded from
+// the catch-all, per the contract in docs/monolith/Configuration.md.
 func TestWorkspaceCacheByObjectDefaultShardCatchAll(t *testing.T) {
-	got, err := workspaceCacheByObject("sharding.gwcp.guidewire.com/shard notin (1,2)")
+	got, err := workspaceCacheByObject("!sharding.example.com/shard")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("workspaceCacheByObject(%q): unexpected error: %v", "!sharding.example.com/shard", err)
 	}
 
 	var sel labels.Selector
@@ -156,10 +154,11 @@ func TestWorkspaceCacheByObjectDefaultShardCatchAll(t *testing.T) {
 		set  labels.Set
 		want bool
 	}{
-		"AbsentLabelMatches": {set: labels.Set{}, want: true},
-		"Shard0Matches":      {set: labels.Set{"sharding.gwcp.guidewire.com/shard": "0"}, want: true},
-		"Shard1Excluded":     {set: labels.Set{"sharding.gwcp.guidewire.com/shard": "1"}, want: false},
-		"Shard2Excluded":     {set: labels.Set{"sharding.gwcp.guidewire.com/shard": "2"}, want: false},
+		"AbsentLabelMatches":  {set: labels.Set{}, want: true},
+		"Shard0Excluded":      {set: labels.Set{"sharding.example.com/shard": "0"}, want: false},
+		"Shard1Excluded":      {set: labels.Set{"sharding.example.com/shard": "1"}, want: false},
+		"Shard2Excluded":      {set: labels.Set{"sharding.example.com/shard": "2"}, want: false},
+		"EmptyStringExcluded": {set: labels.Set{"sharding.example.com/shard": ""}, want: false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -175,7 +174,7 @@ func TestResolveClaimIdentity(t *testing.T) {
 		t.Setenv("POD_NAME", "provider-terraform-shard-1-abc123")
 		holder, _ := resolveClaimIdentity("fallback-lease-id")
 		if holder != "provider-terraform-shard-1-abc123" {
-			t.Errorf("holderIdentity = %q, want %q", holder, "provider-terraform-shard-1-abc123")
+			t.Errorf("resolveClaimIdentity(%q) holder = %q, want %q", "fallback-lease-id", holder, "provider-terraform-shard-1-abc123")
 		}
 	})
 
@@ -194,7 +193,7 @@ func TestResolveClaimIdentity(t *testing.T) {
 		t.Setenv("POD_NAMESPACE", "tenant-a")
 		_, ns := resolveClaimIdentity("fallback-lease-id")
 		if ns != "tenant-a" {
-			t.Errorf("namespace = %q, want %q", ns, "tenant-a")
+			t.Errorf("resolveClaimIdentity(%q) namespace = %q, want %q", "fallback-lease-id", ns, "tenant-a")
 		}
 	})
 
