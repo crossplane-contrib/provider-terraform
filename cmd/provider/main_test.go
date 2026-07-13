@@ -21,7 +21,10 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kingpin/v2"
+	authv1 "k8s.io/api/authorization/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
 	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
@@ -43,6 +46,36 @@ func TestDefaultLeaderElectionID(t *testing.T) {
 	}
 	if *id != want {
 		t.Errorf("parsed --leader-election-id default = %q, want %q", *id, want)
+	}
+}
+
+// TestBuildSchemeRegistersWorkspaceTypes reproduces the --watch-label-selector
+// startup crash if the scheme ordering ever regresses. ctrl.NewManager resolves
+// each cache.ByObject key's GVK against the scheme (via s.ObjectKinds); if the
+// Workspace types aren't registered by then it fails with "no kind is
+// registered for the type v1beta1.Workspace". buildScheme must register them
+// up front. It must also re-add the built-ins that controller-runtime's default
+// scheme would otherwise supply -- Leases (leader election) and
+// SelfSubjectAccessReview (the CRD precheck) -- since supplying our own scheme
+// replaces that default.
+func TestBuildSchemeRegistersWorkspaceTypes(t *testing.T) {
+	s := buildScheme()
+
+	// The exact lookup ctrl.NewManager makes for each ByObject key.
+	for _, obj := range []client.Object{
+		&clusterv1beta1.Workspace{},
+		&namespacedv1beta1.Workspace{},
+	} {
+		if _, _, err := s.ObjectKinds(obj); err != nil {
+			t.Errorf("scheme missing kind for %T: %v", obj, err)
+		}
+	}
+
+	if !s.Recognizes(coordinationv1.SchemeGroupVersion.WithKind("Lease")) {
+		t.Error("built-in Lease missing; leader election would break")
+	}
+	if !s.Recognizes(authv1.SchemeGroupVersion.WithKind("SelfSubjectAccessReview")) {
+		t.Error("built-in SelfSubjectAccessReview missing; the CRD precheck would break")
 	}
 }
 

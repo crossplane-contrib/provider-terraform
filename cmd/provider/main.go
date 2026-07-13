@@ -35,15 +35,22 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/customresourcesgate"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
+	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
+	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 	zapuber "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,14 +58,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
-	authv1 "k8s.io/api/authorization/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
-	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
 	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
-	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
 	"github.com/upbound/provider-terraform/internal/bootcheck"
 	"github.com/upbound/provider-terraform/internal/claims"
@@ -67,6 +67,7 @@ import (
 	"github.com/upbound/provider-terraform/internal/controller/gc"
 	namespacedworkspace "github.com/upbound/provider-terraform/internal/controller/namespaced"
 	"github.com/upbound/provider-terraform/internal/features"
+	authv1 "k8s.io/api/authorization/v1"
 )
 
 func init() {
@@ -143,7 +144,10 @@ func main() {
 	cfg, err := ctrl.GetConfig()
 	kingpin.FatalIfError(err, "Cannot get API server rest config")
 
+	scheme := buildScheme()
+
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
+		Scheme: scheme,
 		Cache: cache.Options{
 			SyncPeriod: syncInterval,
 			ByObject:   workspaceCache,
@@ -151,7 +155,7 @@ func main() {
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
 		// election by default. Leases expire after 15 seconds, with a
-		// 10 second renewal deadline. We've observed leader loss due to
+		// 10 seconds renewal deadline. We've observed leader loss due to
 		// renewal deadlines being exceeded when under high load - i.e.
 		// hundreds of reconciles per second and ~200rps to the API
 		// server. Switching to Leases only and longer leases appears to
@@ -163,12 +167,6 @@ func main() {
 		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
-
-	kingpin.FatalIfError(apiscluster.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(apisnamespaced.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(sourcev1.AddToScheme(mgr.GetScheme()), "Cannot add flux gitrepository APIs to scheme")
-	kingpin.FatalIfError(sourcev1beta2.AddToScheme(mgr.GetScheme()), "Cannot add flux ocirepository APIs to scheme")
-	kingpin.FatalIfError(apiextensionsv1.AddToScheme(mgr.GetScheme()), "Cannot register k8s apiextensions APIs to scheme")
 
 	metricRecorder := managed.NewMRMetricRecorder()
 	stateMetrics := statemetrics.NewMRStateMetrics()
@@ -241,6 +239,23 @@ func main() {
 		kingpin.FatalIfError(namespacedworkspace.Setup(mgr, namespacedOpts, *timeout, *pollJitter, claimCfg), "Cannot setup namespaced Workspace controllers")
 	}
 	kingpin.FatalIfError(mgr.Start(ctrl.SetupSignalHandler()), "Cannot start controller manager")
+}
+
+// buildScheme assembles the scheme before the manager exists, so the cache's
+// ByObject GVK resolution (which runs inside ctrl.NewManager) can find the
+// Workspace kinds. A supplied scheme replaces controller-runtime's default
+// client-go scheme, so the built-ins (Leases for leader election,
+// SelfSubjectAccessReview for the CRD precheck) must be re-added here too.
+func buildScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	kingpin.FatalIfError(clientgoscheme.AddToScheme(s), "Cannot add client-go APIs to scheme")
+	kingpin.FatalIfError(apiscluster.AddToScheme(s), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(apisnamespaced.AddToScheme(s), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(sourcev1.AddToScheme(s), "Cannot add flux gitrepository APIs to scheme")
+	kingpin.FatalIfError(sourcev1beta2.AddToScheme(s), "Cannot add flux ocirepository APIs to scheme")
+	kingpin.FatalIfError(apiextensionsv1.AddToScheme(s), "Cannot register k8s apiextensions APIs to scheme")
+	kingpin.FatalIfError(authv1.AddToScheme(s), "Cannot register k8s authorization APIs to scheme")
+	return s
 }
 
 // workspaceCacheByObject scopes the manager cache to Workspaces matching
@@ -318,9 +333,6 @@ func UseJSON() zap.Opts {
 }
 
 func canWatchCRD(ctx context.Context, mgr manager.Manager) (bool, error) {
-	if err := authv1.AddToScheme(mgr.GetScheme()); err != nil {
-		return false, err
-	}
 	verbs := []string{"get", "list", "watch"}
 	for _, verb := range verbs {
 		sar := &authv1.SelfSubjectAccessReview{
