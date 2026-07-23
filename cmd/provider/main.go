@@ -67,8 +67,8 @@ import (
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
 	"github.com/upbound/provider-terraform/internal/controller/gc"
 	namespacedworkspace "github.com/upbound/provider-terraform/internal/controller/namespaced"
-	"github.com/upbound/provider-terraform/internal/workdir"
 	"github.com/upbound/provider-terraform/internal/features"
+	"github.com/upbound/provider-terraform/internal/workdir"
 )
 
 func init() {
@@ -121,6 +121,7 @@ func main() {
 
 	if *shardName != "" {
 		log.Info("Horizontal scaling enabled: this instance will only reconcile Workspaces with label " + workdir.ShardLabel + "=" + *shardName)
+		log.Info("Workspaces without the " + workdir.ShardLabel + " label will not be reconciled by this instance. Ensure all Workspaces are labeled or run an unsharded instance as a catch-all.")
 	}
 
 	cfg, err := ctrl.GetConfig()
