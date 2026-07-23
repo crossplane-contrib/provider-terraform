@@ -67,6 +67,7 @@ import (
 	"github.com/upbound/provider-terraform/internal/controller/cluster/workspace"
 	"github.com/upbound/provider-terraform/internal/controller/gc"
 	namespacedworkspace "github.com/upbound/provider-terraform/internal/controller/namespaced"
+	"github.com/upbound/provider-terraform/internal/workdir"
 	"github.com/upbound/provider-terraform/internal/features"
 )
 
@@ -119,7 +120,7 @@ func main() {
 		"shard-name", *shardName)
 
 	if *shardName != "" {
-		log.Info("Horizontal scaling enabled: this instance will only reconcile Workspaces with label terraform.crossplane.io/shard=" + *shardName)
+		log.Info("Horizontal scaling enabled: this instance will only reconcile Workspaces with label " + workdir.ShardLabel + "=" + *shardName)
 	}
 
 	cfg, err := ctrl.GetConfig()
@@ -147,7 +148,7 @@ func main() {
 	// enabling true horizontal scaling.
 	if *shardName != "" {
 		shardSelector := labels.SelectorFromSet(labels.Set{
-			"terraform.crossplane.io/shard": *shardName,
+			workdir.ShardLabel: *shardName,
 		})
 
 		cacheOpts.ByObject = map[client.Object]cache.ByObject{
@@ -242,8 +243,8 @@ func main() {
 
 	// NOTE: cluster-scoped and namespaced Workspaces share a common
 	// workspace root directory. Update GC setup if they diverge.
-	// When running in sharded mode, GC only cleans up directories for
-	// workspaces that belong to this shard.
+	// GC uses mgr.GetAPIReader() (uncached) to list all workspaces
+	// across shards, avoiding cross-shard directory deletion.
 	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log, *shardName), "cannot setup Workspace garbage collector controller")
 	canSafeStart, err := canWatchCRD(ctx, mgr)
 	kingpin.FatalIfError(err, "SafeStart precheck failed")

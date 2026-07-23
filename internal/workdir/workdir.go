@@ -47,7 +47,7 @@ const (
 // A GarbageCollector garbage collects the working directories of Terraform
 // workspaces that no longer exist.
 type GarbageCollector struct {
-	kube      client.Client
+	kube      client.Reader
 	parentDir string
 	fs        afero.Afero
 	interval  time.Duration
@@ -76,17 +76,16 @@ func WithLogger(l logging.Logger) GarbageCollectorOption {
 	return func(gc *GarbageCollector) { gc.log = l }
 }
 
-// WithShardName stores the shard name for logging purposes. The GC always
-// lists ALL workspaces (regardless of shard) to safely determine which
-// directories can be deleted — it only removes directories for workspaces
-// that no longer exist in any shard.
+// WithShardName sets the shard name for logging context.
 func WithShardName(name string) GarbageCollectorOption {
 	return func(gc *GarbageCollector) { gc.shardName = name }
 }
 
 // NewGarbageCollector returns a garbage collector that garbage collects the
-// working directories of Terraform workspaces.
-func NewGarbageCollector(c client.Client, parentDir string, o ...GarbageCollectorOption) *GarbageCollector {
+// working directories of Terraform workspaces. The client.Reader should be
+// an uncached API reader (e.g. mgr.GetAPIReader()) so that the GC sees all
+// workspaces across all shards, not just those in the local cache.
+func NewGarbageCollector(c client.Reader, parentDir string, o ...GarbageCollectorOption) *GarbageCollector {
 	gc := &GarbageCollector{
 		kube:      c,
 		parentDir: parentDir,
@@ -131,11 +130,11 @@ func (gc *GarbageCollector) collect(ctx context.Context) error { //nolint:gocycl
 	exists := map[string]bool{}
 	listedAny := false
 
-	// NOTE: The GC always lists ALL workspaces without shard filtering.
-	// Even in sharded mode, we need the complete set of existing workspace
-	// UIDs to safely determine which directories can be deleted. Filtering
-	// by shard here could cause one shard's GC to delete directories that
-	// belong to workspaces managed by another shard.
+	// The GC uses an uncached API reader (not the manager's cached client)
+	// to list ALL workspaces regardless of shard. This is critical: the
+	// manager's cache is filtered by shard label, so using mgr.GetClient()
+	// would only return this shard's workspaces, causing the GC to delete
+	// directories belonging to other shards' workspaces.
 
 	// List cluster-scoped workspaces
 	// Note: CRD may not be available if CRD gating is enabled and CRD not installed

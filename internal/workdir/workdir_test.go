@@ -61,7 +61,7 @@ func TestCollect(t *testing.T) {
 	parentDir := "/test"
 
 	type fields struct {
-		kube       client.Client
+		kube       client.Reader
 		parentdDir string
 		fs         afero.Afero
 	}
@@ -299,7 +299,7 @@ func TestCollectWithShardName(t *testing.T) {
 	parentDir := "/test"
 
 	type fields struct {
-		kube       client.Client
+		kube       client.Reader
 		parentdDir string
 		fs         afero.Afero
 		shardName  string
