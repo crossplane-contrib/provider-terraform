@@ -37,13 +37,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
 	"github.com/upbound/provider-terraform/apis/cluster/v1beta1"
 	tfClient "github.com/upbound/provider-terraform/internal/clients"
@@ -139,7 +139,7 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 	opts := []managed.ReconcilerOption{
 		managed.WithPollInterval(o.PollInterval),
 		managed.WithPollJitterHook(pollJitter),
-		managed.WithExternalConnecter(c),
+		managed.WithExternalConnector(c),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
 		managed.WithTimeout(timeout),
@@ -560,7 +560,7 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		// TODO(negz): Allow Workspaces to optionally derive their readiness from an
 		// output - similar to the logic XRs use to derive readiness from a field of
 		// a composed resource.
-		cr.Status.SetConditions(xpv1.Available())
+		cr.Status.SetConditions(xpv2.Available())
 	}
 
 	return managed.ExternalObservation{
@@ -613,7 +613,7 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	// Note that since Create() calls this function the Reconciler will overwrite this Available condition with Creating
 	// on the first pass and it will get reset to Available() by Observe() on the next pass if there are no differences.
 	// Leave this call for the Update() case.
-	cr.Status.SetConditions(xpv1.Available())
+	cr.Status.SetConditions(xpv2.Available())
 	return managed.ExternalUpdate{ConnectionDetails: op2cd(op)}, nil
 }
 
