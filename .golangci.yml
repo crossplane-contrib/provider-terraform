@@ -113,6 +113,18 @@ linters:
       - linters:
           - staticcheck
         text: 'QF1001:'
+      # mgr.GetEventRecorderFor is deprecated at controller-runtime
+      # in favor of mgr.GetEventRecorder.
+      # Suppress until crossplane-runtime adapts
+      - path: internal/controller/
+        text: "SA1019:.*GetEventRecorderFor is deprecated"
+        linters:
+          - staticcheck
+      # resource.LegacyManaged is deprecated for new implementations
+      # but we still handle legacy cluster-scoped resources
+      - text: "SA1019:.*LegacyManaged is deprecated"
+        linters:
+          - staticcheck
     paths:
       - zz_\..+\.go$
       - third_party$
