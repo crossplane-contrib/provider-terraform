@@ -49,6 +49,7 @@ import (
 	"github.com/upbound/provider-terraform/internal/claims"
 	tfClient "github.com/upbound/provider-terraform/internal/clients"
 	"github.com/upbound/provider-terraform/internal/features"
+	"github.com/upbound/provider-terraform/internal/handover"
 	"github.com/upbound/provider-terraform/internal/terraform"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -149,6 +150,8 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 		managed.WithTimeout(timeout),
 		managed.WithMetricRecorder(o.MetricOptions.MRMetrics),
 	}
+
+	opts = append(opts, handover.ReconcilerOptions(mgr.GetClient(), mgr.GetAPIReader())...)
 
 	if o.Features.Enabled(features.EnableBetaManagementPolicies) {
 		opts = append(opts, managed.WithManagementPolicies())
