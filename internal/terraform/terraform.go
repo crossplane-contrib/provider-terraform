@@ -676,6 +676,84 @@ func (h Harness) Destroy(ctx context.Context, o ...Option) error {
 	return Classify(err)
 }
 
+// forceUnlockProbeTimeout bounds the read-only lock probe ForceUnlock runs
+// before touching anything. It only needs to be long enough for the backend
+// to respond that the lock is (or isn't) held -- not for a real plan.
+const forceUnlockProbeTimeout = "1s"
+
+// lockInfoID matches the "ID:" line inside Terraform's "Lock Info" block,
+// emitted on stderr when a state-lock acquisition fails.
+var lockInfoID = regexp.MustCompile(`(?m)^\s*ID:\s+(\S+)\s*$`)
+
+// parseLockID extracts a Terraform state lock ID from a failed operation's
+// stderr, if the failure was a lock-acquisition conflict.
+func parseLockID(stderr []byte) (string, bool) {
+	m := lockInfoID.FindSubmatch(stderr)
+	if m == nil {
+		return "", false
+	}
+	return string(m[1]), true
+}
+
+// ForceUnlock clears a Terraform state lock left behind by a dead owner.
+// Unlike Apply and Destroy it does not assume a lock is actually held: it
+// first probes with a short, real (locking) plan -- unlike Diff, which
+// intentionally passes -lock=false -- and only force-unlocks if that probe
+// fails with a lock-acquisition conflict. A probe failure for any other
+// reason (e.g. a genuine configuration error) is returned unmodified rather
+// than treated as a lock.
+//
+// Callers must independently confirm the presumed-dead owner's era (design
+// doc §8 R4) before calling this: unconditionally force-unlocking a lock
+// that a live process is legitimately holding can corrupt state.
+func (h Harness) ForceUnlock(ctx context.Context, o ...Option) error {
+	po := &options{}
+	for _, fn := range o {
+		fn(po)
+	}
+
+	for _, vf := range po.varFiles {
+		if err := os.WriteFile(filepath.Join(h.Dir, vf.filename), vf.data, 0600); err != nil {
+			return errors.Wrap(err, errWriteVarFile)
+		}
+	}
+
+	args := append([]string{"plan", "-no-color", "-input=false", "-detailed-exitcode", "-lock=true", "-lock-timeout=" + forceUnlockProbeTimeout}, po.args...)
+	cmd := exec.CommandContext(ctx, h.Path, args...) //nolint:gosec
+	cmd.Dir = h.Dir
+	if len(h.Envs) > 0 {
+		cmd.Env = append(os.Environ(), h.Envs...)
+	}
+
+	_, err := runCommand(ctx, cmd)
+	// The -detailed-exitcode flag makes plan return 0 (no changes) or 2
+	// (changes present) on success, 1 on error -- see Diff, above.
+	switch cmd.ProcessState.ExitCode() {
+	case 0, 2:
+		return nil // lock is free
+	}
+
+	ee := &exec.ExitError{}
+	if !errors.As(err, &ee) {
+		return Classify(err)
+	}
+	lockID, ok := parseLockID(ee.Stderr)
+	if !ok {
+		// Plan failed for a reason other than a held lock -- surface the
+		// real failure rather than attempting an unlock.
+		return Classify(err)
+	}
+
+	uArgs := []string{"force-unlock", "-force", "-no-color", lockID}
+	uCmd := exec.CommandContext(ctx, h.Path, uArgs...) //nolint:gosec
+	uCmd.Dir = h.Dir
+	if len(h.Envs) > 0 {
+		uCmd.Env = append(os.Environ(), h.Envs...)
+	}
+	_, err = runCommand(ctx, uCmd)
+	return Classify(err)
+}
+
 // cmdResult represents the result of the command execution
 type cmdResult struct {
 	out []byte

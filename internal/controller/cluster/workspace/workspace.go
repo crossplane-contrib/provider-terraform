@@ -46,8 +46,10 @@ import (
 	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
 	"github.com/upbound/provider-terraform/apis/cluster/v1beta1"
+	"github.com/upbound/provider-terraform/internal/claims"
 	tfClient "github.com/upbound/provider-terraform/internal/clients"
 	"github.com/upbound/provider-terraform/internal/features"
+	"github.com/upbound/provider-terraform/internal/handover"
 	"github.com/upbound/provider-terraform/internal/terraform"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -119,18 +121,21 @@ type tfclient interface {
 	Destroy(ctx context.Context, o ...terraform.Option) error
 	DeleteCurrentWorkspace(ctx context.Context) error
 	GenerateChecksum(ctx context.Context) (string, error)
+	ForceUnlock(ctx context.Context, o ...terraform.Option) error
 }
 
 // Setup adds a controller that reconciles Workspace managed resources.
-func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Duration) error {
+func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Duration, claimCfg claims.Config) error {
 	name := managed.ControllerName(v1beta1.WorkspaceGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	c := &connector{
-		kube:   mgr.GetClient(),
-		usage:  resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1beta1.ProviderConfigUsage{}),
-		logger: o.Logger,
-		fs:     fs,
+		kube:     mgr.GetClient(),
+		usage:    resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1beta1.ProviderConfigUsage{}),
+		logger:   o.Logger,
+		fs:       fs,
+		claimCfg: claimCfg,
+		claimMgr: claims.NewManager(mgr.GetClient(), claimCfg),
 		terraform: func(dir string, usePluginCache bool, enableTerraformCLILogging bool, logger logging.Logger, envs ...string) tfclient {
 			return terraform.Harness{Path: tfPath, Dir: dir, UsePluginCache: usePluginCache, EnableTerraformCLILogging: enableTerraformCLILogging, Logger: logger, Envs: envs}
 		},
@@ -145,6 +150,8 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 		managed.WithTimeout(timeout),
 		managed.WithMetricRecorder(o.MetricOptions.MRMetrics),
 	}
+
+	opts = append(opts, handover.ReconcilerOptions(mgr.GetClient(), mgr.GetAPIReader())...)
 
 	if o.Features.Enabled(features.EnableBetaManagementPolicies) {
 		opts = append(opts, managed.WithManagementPolicies())
@@ -169,9 +176,9 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 
 // SetupGated adds a controller that reconciles ProviderConfigs by accounting for
 // their current usage.
-func SetupGated(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration) error {
+func SetupGated(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration, claimCfg claims.Config) error {
 	o.Gate.Register(func() {
-		if err := Setup(mgr, o, timeout, pollJitter); err != nil {
+		if err := Setup(mgr, o, timeout, pollJitter, claimCfg); err != nil {
 			mgr.GetLogger().Error(err, "unable to setup reconciler", "gvk", v1beta1.WorkspaceGroupVersionKind.String())
 		}
 	}, v1beta1.WorkspaceGroupVersionKind)
@@ -183,6 +190,8 @@ type connector struct {
 	usage     tfClient.LegacyTracker
 	logger    logging.Logger
 	fs        afero.Afero
+	claimCfg  claims.Config
+	claimMgr  *claims.Manager
 	terraform func(dir string, usePluginCache bool, enableTerraformCLILogging bool, logger logging.Logger, envs ...string) tfclient
 }
 
@@ -439,7 +448,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 		}
 		if cr.Status.AtProvider.Checksum == checksum {
 			l.Debug("Checksums match - skip running terraform init")
-			return &external{tf: tf, kube: c.kube, logger: c.logger}, errors.Wrap(tf.Workspace(ctx, meta.GetExternalName(cr)), errWorkspace)
+			return &external{tf: tf, kube: c.kube, logger: c.logger, claimCfg: c.claimCfg, claimMgr: c.claimMgr}, errors.Wrap(tf.Workspace(ctx, meta.GetExternalName(cr)), errWorkspace)
 		}
 		l.Debug("Checksums don't match so run terraform init:", "old", cr.Status.AtProvider.Checksum, "new", checksum)
 	}
@@ -452,7 +461,7 @@ func (c *connector) Connect(ctx context.Context, mg resource.Managed) (managed.E
 	if err := tf.Init(ctx, o...); err != nil {
 		return nil, errors.Wrap(err, errInit)
 	}
-	return &external{tf: tf, kube: c.kube}, errors.Wrap(tf.Workspace(ctx, meta.GetExternalName(cr)), errWorkspace)
+	return &external{tf: tf, kube: c.kube, claimCfg: c.claimCfg, claimMgr: c.claimMgr}, errors.Wrap(tf.Workspace(ctx, meta.GetExternalName(cr)), errWorkspace)
 }
 
 func (c *connector) getFluxArtefactURL(ctx context.Context, fluxSourceName string) (string, error) {
@@ -496,9 +505,11 @@ func (c *connector) getFluxArtefactURL(ctx context.Context, fluxSourceName strin
 }
 
 type external struct {
-	tf     tfclient
-	kube   client.Client
-	logger logging.Logger
+	tf       tfclient
+	kube     client.Client
+	logger   logging.Logger
+	claimCfg claims.Config
+	claimMgr *claims.Manager
 }
 
 func (c *external) checkDiff(ctx context.Context, cr *v1beta1.Workspace) (bool, error) {
@@ -589,7 +600,14 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	}
 
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.ApplyArgs))
-	if err := c.tf.Apply(ctx, o...); err != nil {
+	err = claims.Guard(ctx, c.claimMgr, c.claimCfg, cr, v1beta1.WorkspaceGroupVersionKind,
+		func(ctx context.Context) error { return c.tf.ForceUnlock(ctx, o...) },
+		func(ctx context.Context) error { return c.tf.Apply(ctx, o...) },
+	)
+	if errors.Is(err, claims.ErrBackoff) {
+		return managed.ExternalUpdate{}, err
+	}
+	if err != nil {
 		return managed.ExternalUpdate{}, errors.Wrap(err, errApply)
 	}
 
@@ -629,7 +647,14 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) (managed.Ext
 	}
 
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.DestroyArgs))
-	return managed.ExternalDelete{}, errors.Wrap(c.tf.Destroy(ctx, o...), errDestroy)
+	err = claims.Guard(ctx, c.claimMgr, c.claimCfg, cr, v1beta1.WorkspaceGroupVersionKind,
+		func(ctx context.Context) error { return c.tf.ForceUnlock(ctx, o...) },
+		func(ctx context.Context) error { return c.tf.Destroy(ctx, o...) },
+	)
+	if errors.Is(err, claims.ErrBackoff) {
+		return managed.ExternalDelete{}, err
+	}
+	return managed.ExternalDelete{}, errors.Wrap(err, errDestroy)
 }
 
 func (c *external) Disconnect(ctx context.Context) error {
