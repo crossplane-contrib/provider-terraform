@@ -35,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
-	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
@@ -1623,36 +1622,6 @@ func TestCreate(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestCreateDoesNotSetExternalName pins the precondition for the
-// managed.WithDeterministicExternalName(true) that handover.ReconcilerOptions
-// passes. That option is only sound while Create never assigns an external name
-// that exists solely in the external system: it tells the reconciler an
-// undeterminable create result is safe to retry, rather than something that may
-// have leaked an unrecorded resource. A Workspace's external name comes from the
-// default NameAsExternalName initializer and Create only ever reads it. If that
-// changes, the option has to be removed along with it.
-func TestCreateDoesNotSetExternalName(t *testing.T) {
-	ws := &v1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "ws-s1-long-01-test", Namespace: "default"}}
-	meta.SetExternalName(ws, ws.GetName())
-
-	e := &external{
-		kube: &test.MockClient{},
-		tf: &MockTf{
-			MockApply:            func(_ context.Context, _ ...terraform.Option) error { return nil },
-			MockOutputs:          func(_ context.Context) ([]terraform.Output, error) { return nil, nil },
-			MockGenerateChecksum: func(_ context.Context) (string, error) { return "checksum", nil },
-		},
-	}
-
-	if _, err := e.Create(context.Background(), ws); err != nil {
-		t.Fatalf("Create(...): unexpected error: %v", err)
-	}
-
-	if got := meta.GetExternalName(ws); got != "ws-s1-long-01-test" {
-		t.Errorf("Create(...) changed the external name to %q -- WithDeterministicExternalName(true) is no longer safe", got)
 	}
 }
 

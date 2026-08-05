@@ -111,10 +111,18 @@ func TestUncachedWritesUseTheWrappedClient(t *testing.T) {
 	}
 }
 
-// TestReconcilerOptionsSetsDeterministicExternalName pins the first half of the
-// fix: without it the reconciler refuses to act on any Workspace whose create
-// result it cannot determine, which is every Workspace relabelled mid-apply.
-func TestReconcilerOptionsSetsDeterministicExternalName(t *testing.T) {
+// TestReconcilerOptionsLeavesCreatePendingGateIntact pins a deliberate omission.
+//
+// managed.WithDeterministicExternalName(true) would wave the reconciler through
+// a create whose result was never recorded, which makes the create-pending wedge
+// disappear and is therefore a tempting thing to reach for. It is not safe here:
+// the option asserts that Observe can find whatever an unrecorded create made,
+// and a Workspace's Observe can only find what the Terraform state records. If
+// an apply died before its resources reached persisted state, re-applying
+// provisions them again. See the package doc.
+//
+// Whoever owns the Workspace decides that, by removing the annotation.
+func TestReconcilerOptionsLeavesCreatePendingGateIntact(t *testing.T) {
 	r := applyOptions(&test.MockClient{}, &test.MockClient{})
 
 	f := reflect.ValueOf(r).Elem().FieldByName("deterministicExternalName")
@@ -122,13 +130,14 @@ func TestReconcilerOptionsSetsDeterministicExternalName(t *testing.T) {
 		t.Fatal("managed.Reconciler no longer has a bool deterministicExternalName field: check whether " +
 			"WithDeterministicExternalName still exists after the crossplane-runtime bump, and update this test")
 	}
-	if !f.Bool() {
-		t.Error("ReconcilerOptions() did not set a deterministic external name; a Workspace relabelled mid-apply will wedge")
+	if f.Bool() {
+		t.Error("ReconcilerOptions() declared the external name deterministic, bypassing the create-pending gate; " +
+			"a terraform apply that died before persisting state will now be silently repeated")
 	}
 }
 
-// TestCriticalAnnotationsSurviveMidApplyRelabel pins the second half, and is
-// the regression test for the shard-handover deadlock.
+// TestCriticalAnnotationsSurviveMidApplyRelabel is the regression test for the
+// shard-handover deadlock.
 //
 // A Workspace is created under shard-1. The reconciler stamps
 // external-create-pending, persists it, and starts a long terraform apply.

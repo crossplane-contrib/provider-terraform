@@ -24,16 +24,44 @@ limitations under the License.
 // because --watch-label-selector makes that cache label-filtered and the API
 // server delivers "was matching, now isn't" as a DELETED watch event.
 //
-// Between them those two effects can strand a Workspace permanently. The
-// reconciler stamps crossplane.io/external-create-pending before calling
-// Create, and records external-create-succeeded once Create returns. If the
-// second write cannot land, creation looks incomplete forever, and every
-// instance -- including the one that just inherited the Workspace -- refuses to
-// reconcile it at all: crossplane-runtime bails on ExternalCreateIncomplete
-// before it ever calls Observe or Create, and does not requeue. Only a human
-// removing the annotation clears it.
+// Between them those two effects strand the Workspace. The reconciler stamps
+// crossplane.io/external-create-pending before calling Create, and records
+// external-create-succeeded once Create returns. If that second write cannot
+// land, creation looks incomplete forever, and every instance -- including the
+// one that just inherited the Workspace -- refuses to reconcile it at all:
+// crossplane-runtime bails on ExternalCreateIncomplete before it ever calls
+// Observe or Create, and does not requeue.
 //
-// ReconcilerOptions closes both halves of that trap.
+// ReconcilerOptions repairs the write. It deliberately leaves the refusal alone.
+//
+// # Why the create-pending gate is left in place
+//
+// managed.WithDeterministicExternalName(true) would make the reconciler proceed
+// through an undeterminable create result rather than refuse. It looks
+// applicable here, because a Workspace's external name really is deterministic:
+// it is the Workspace's own name, assigned by the default NameAsExternalName
+// initializer and only ever read by Create.
+//
+// That is the wrong reading of the option. What it asserts is that a create
+// whose result was never recorded is safe to repeat, because Observe can still
+// find whatever that create made. For a Workspace, Observe answers
+// ResourceExists from `terraform state list` and `terraform output` -- so it can
+// only find what the Terraform state records. A run killed between provisioning
+// a resource and that resource reaching persisted state leaves nothing for
+// Observe to find, and the next apply provisions it a second time. Terraform
+// workspace names are deterministic; the cloud resources a module creates are
+// not.
+//
+// Whether that risk is real depends on the backend each module declares, which
+// this provider cannot know. So the call belongs to whoever owns the Workspace,
+// made against the actual state:
+//
+//	kubectl annotate workspace <name> crossplane.io/external-create-pending-
+//
+// That only arises when the owning instance dies mid-apply and records no
+// outcome at all -- a crash, an OOM kill, an eviction, a --timeout kill. It is
+// upstream behaviour rather than anything sharding introduced, and an instance
+// that merely loses a Workspace to another shard still records its result.
 package handover
 
 import (
@@ -48,16 +76,6 @@ import (
 // straight from the API server -- manager.GetAPIReader().
 func ReconcilerOptions(c client.Client, reader client.Reader) []managed.ReconcilerOption {
 	return []managed.ReconcilerOption{
-		// A Workspace's external name is its own name: assigned by the default
-		// NameAsExternalName initializer, and only ever read by Create. Saying
-		// so lets the reconciler proceed when it cannot determine a previous
-		// Create's result instead of refusing to touch the Workspace until a
-		// human intervenes. The refusal exists to avoid leaking a resource
-		// whose non-deterministic name was never recorded; with no such name to
-		// lose it only ever wedges the Workspace -- after a mid-apply relabel,
-		// or a pod restart mid-apply.
-		managed.WithDeterministicExternalName(true),
-
 		// Persist critical annotations through a client whose reads bypass the
 		// cache. RetryingCriticalAnnotationUpdater recovers from a stale
 		// resourceVersion by re-Getting the object, re-applying the
