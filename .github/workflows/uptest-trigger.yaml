@@ -110,11 +110,6 @@ jobs:
         with:
           submodules: true
 
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
-        with:
-          go-version-file: go.mod
-
       - name: Checkout PR
         id: checkout-pr
         env:
@@ -124,6 +119,11 @@ jobs:
           git submodule update --init --recursive
           OUTPUT=$(git log -1 --format='%H')
           echo "commit-sha=$OUTPUT" >> $GITHUB_OUTPUT
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
 
       - name: Vendor Dependencies
         run: make vendor vendor.check
