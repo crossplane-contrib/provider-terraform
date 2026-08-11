@@ -34,15 +34,28 @@ import (
 //
 // Each GC queries both cluster-scoped and namespaced workspaces to determine
 // which directories can be safely deleted.
-func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
+//
+// The GC uses mgr.GetAPIReader() (uncached) instead of mgr.GetClient()
+// (cached) to list workspaces. In sharded mode the manager's cache is
+// filtered by shard label, so using the cached client would only return
+// this shard's workspaces and the GC could delete directories belonging
+// to other shards' workspaces.
+func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger, shardName string) error {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
+
+	gcOpts := []workdir.GarbageCollectorOption{
+		workdir.WithFs(fs),
+		workdir.WithLogger(logger),
+	}
+	if shardName != "" {
+		gcOpts = append(gcOpts, workdir.WithShardName(shardName))
+	}
 
 	// GC for main workspace directory
 	gcWorkspace := workdir.NewGarbageCollector(
-		mgr.GetClient(),
+		mgr.GetAPIReader(),
 		tfDir,
-		workdir.WithFs(fs),
-		workdir.WithLogger(logger),
+		gcOpts...,
 	)
 	if err := mgr.Add(gcWorkspace); err != nil {
 		return err
@@ -50,16 +63,15 @@ func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
 
 	// GC for temporary workspace directory
 	gcTmp := workdir.NewGarbageCollector(
-		mgr.GetClient(),
+		mgr.GetAPIReader(),
 		filepath.Join("/tmp", tfDir),
-		workdir.WithFs(fs),
-		workdir.WithLogger(logger),
+		gcOpts...,
 	)
 	if err := mgr.Add(gcTmp); err != nil {
 		return err
 	}
 
-	logger.Debug("Workspace garbage collectors initialized successfully")
+	logger.Debug("Workspace garbage collectors initialized successfully", "shard-name", shardName)
 
 	return nil
 }
