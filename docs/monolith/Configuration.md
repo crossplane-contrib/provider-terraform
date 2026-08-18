@@ -72,6 +72,33 @@ spec:
 ```
 
 
+## Workspace Directory Garbage Collection
+
+The provider periodically scans its workspace root directory (`/tf` by
+default) and removes any per-Workspace directory that no longer has a
+corresponding `Workspace` resource. This runs every hour by default and
+can be tuned with `--gc-interval`:
+
+```yaml
+apiVersion: pkg.crossplane.io/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: terraform
+  labels:
+    app: crossplane-provider-terraform
+spec:
+  args:
+    - -d
+    - --gc-interval=6h
+```
+
+A longer interval reduces filesystem scan frequency; it has no effect on
+whether a live Workspace's directory can be removed. See [Provider Plugin
+Cache](#provider-plugin-cacheenabled-by-default) below for how to avoid
+re-downloading Terraform provider binaries even when a workspace directory
+is legitimately recreated (e.g. after a Workspace is deleted and a new one
+created, or the pod is rescheduled to fresh storage).
+
 ## Private Git repository support
 
 To securely propagate git credentials create a `git-credentials` secret in [git

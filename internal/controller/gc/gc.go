@@ -18,6 +18,7 @@ package gc
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/spf13/afero"
@@ -34,32 +35,33 @@ import (
 //
 // Each GC queries both cluster-scoped and namespaced workspaces to determine
 // which directories can be safely deleted.
-func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger) error {
+//
+// interval controls how often each GC runs. A zero value keeps the
+// workdir package default (one hour).
+func Setup(mgr ctrl.Manager, tfDir string, logger logging.Logger, interval time.Duration) error {
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 
-	// GC for main workspace directory
-	gcWorkspace := workdir.NewGarbageCollector(
-		mgr.GetClient(),
-		tfDir,
+	opts := []workdir.GarbageCollectorOption{
 		workdir.WithFs(fs),
 		workdir.WithLogger(logger),
-	)
+	}
+	if interval > 0 {
+		opts = append(opts, workdir.WithInterval(interval))
+	}
+
+	// GC for main workspace directory
+	gcWorkspace := workdir.NewGarbageCollector(mgr.GetClient(), tfDir, opts...)
 	if err := mgr.Add(gcWorkspace); err != nil {
 		return err
 	}
 
 	// GC for temporary workspace directory
-	gcTmp := workdir.NewGarbageCollector(
-		mgr.GetClient(),
-		filepath.Join("/tmp", tfDir),
-		workdir.WithFs(fs),
-		workdir.WithLogger(logger),
-	)
+	gcTmp := workdir.NewGarbageCollector(mgr.GetClient(), filepath.Join("/tmp", tfDir), opts...)
 	if err := mgr.Add(gcTmp); err != nil {
 		return err
 	}
 
-	logger.Debug("Workspace garbage collectors initialized successfully")
+	logger.Debug("Workspace garbage collectors initialized successfully", "interval", interval.String())
 
 	return nil
 }
