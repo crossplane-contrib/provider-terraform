@@ -93,11 +93,17 @@ spec:
 ```
 
 A longer interval reduces filesystem scan frequency; it has no effect on
-whether a live Workspace's directory can be removed. See [Provider Plugin
-Cache](#provider-plugin-cacheenabled-by-default) below for how to avoid
-re-downloading Terraform provider binaries even when a workspace directory
-is legitimately recreated (e.g. after a Workspace is deleted and a new one
-created, or the pod is rescheduled to fresh storage).
+whether a live Workspace's directory can be removed. Set it to `0` to
+disable the garbage collector entirely - directories for deleted Workspaces
+are then never reclaimed, so only do this if something else manages disk
+usage (e.g. an ephemeral volume that's wiped on pod restart). A negative
+value is rejected at startup.
+
+See [Provider Plugin Cache](#provider-plugin-cacheenabled-by-default)
+below for how to avoid re-downloading Terraform provider binaries even
+when a workspace directory is legitimately recreated (e.g. after a
+Workspace is deleted and a new one created, or the pod is rescheduled to
+fresh storage).
 
 ## Private Git repository support
 
