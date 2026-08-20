@@ -8,7 +8,7 @@ require (
 	github.com/MakeNowJust/heredoc/v2 v2.0.1
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/crossplane/crossplane-runtime/v2 v2.3.3
-	github.com/crossplane/crossplane-tools v0.0.0-20260715161912-60e57f817ad1
+	github.com/crossplane/crossplane-tools v0.0.0-20260719180100-659f1dc036c5
 	github.com/crossplane/crossplane/apis/v2 v2.3.3
 	github.com/fluxcd/source-controller/api v1.2.5
 	github.com/google/go-cmp v0.7.0
