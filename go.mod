@@ -16,7 +16,7 @@ require (
 	github.com/hashicorp/go-getter v1.8.4
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/afero v1.15.0
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 	google.golang.org/grpc v1.82.1
 	k8s.io/api v0.35.1
 	k8s.io/apiextensions-apiserver v0.35.0
