@@ -79,6 +79,7 @@ func main() {
 		pollStateMetricInterval  = app.Flag("poll-state-metric", "State metric recording interval").Default("5s").Duration()
 		pollJitter               = app.Flag("poll-jitter", "If non-zero, varies the poll interval by a random amount up to plus-or-minus this value.").Default("1m").Duration()
 		timeout                  = app.Flag("timeout", "Controls how long Terraform processes may run before they are killed.").Default("20m").Duration()
+		gcInterval               = app.Flag("gc-interval", "Controls how often the workspace directory garbage collector runs. Lower values reclaim disk sooner; higher values reduce filesystem scans. Set to 0 to disable the garbage collector entirely. Has no effect on whether a workspace directory can be prematurely removed.").Default("1h").Duration()
 		leaderElection           = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").Envar("LEADER_ELECTION").Bool()
 		maxReconcileRate         = app.Flag("max-reconcile-rate", "The maximum number of concurrent reconciliation operations.").Default("1").Int()
 		enableManagementPolicies = app.Flag("enable-management-policies", "Enable support for Management Policies.").Default("true").Envar("ENABLE_MANAGEMENT_POLICIES").Bool()
@@ -107,6 +108,7 @@ func main() {
 		"sync-period", syncInterval.String(),
 		"poll-interval", pollInterval.String(),
 		"poll-jitter", pollJitter.String(),
+		"gc-interval", gcInterval.String(),
 		"max-reconcile-rate", *maxReconcileRate)
 
 	cfg, err := ctrl.GetConfig()
@@ -193,7 +195,7 @@ func main() {
 
 	// NOTE: cluster-scoped and namespaced Workspaces share a common
 	// workspace root directory. Update GC setup if they diverge
-	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log), "cannot setup Workspace garbage collector controller")
+	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log, gc.WithInterval(*gcInterval)), "cannot setup Workspace garbage collector controller")
 	canSafeStart, err := canWatchCRD(ctx, mgr)
 	kingpin.FatalIfError(err, "SafeStart precheck failed")
 	if canSafeStart {
