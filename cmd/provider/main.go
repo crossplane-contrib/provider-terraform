@@ -38,9 +38,13 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -86,6 +90,7 @@ func main() {
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
 		changelogsSocketPath     = app.Flag("changelogs-socket-path", "Path for changelogs socket (if enabled)").Default("/var/run/changelogs/changelogs.sock").Envar("CHANGELOGS_SOCKET_PATH").String()
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
+		enableSecretCache        = app.Flag("enable-secret-cache", "Enable caching of Secret objects. When true, Secrets are served from the informer cache instead of direct API calls. This reduces API server load but increases memory usage.").Default("true").Envar("ENABLE_SECRET_CACHE").Bool()
 	)
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
@@ -114,10 +119,38 @@ func main() {
 	cfg, err := ctrl.GetConfig()
 	kingpin.FatalIfError(err, "Cannot get API server rest config")
 
+	// Client options to control secret caching behavior.
+	var clientOpts client.Options
+	if !*enableSecretCache {
+		// When secret caching is disabled, configure the
+		// client to bypass the cache for Secret objects. This means
+		// Get/List calls for Secrets will go directly to the API server.
+		clientOpts = client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		}
+	}
+
+	scheme := runtime.NewScheme()
+	kingpin.FatalIfError(clientgoscheme.AddToScheme(scheme), "Cannot add clientgo scheme")
+	kingpin.FatalIfError(apiscluster.AddToScheme(scheme), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(apisnamespaced.AddToScheme(scheme), "Cannot add terraform APIs to scheme")
+	kingpin.FatalIfError(sourcev1.AddToScheme(scheme), "Cannot add flux gitrepository APIs to scheme")
+	kingpin.FatalIfError(sourcev1beta2.AddToScheme(scheme), "Cannot add flux ocirepository APIs to scheme")
+	kingpin.FatalIfError(apiextensionsv1.AddToScheme(scheme), "Cannot register k8s apiextensions APIs to scheme")
+
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
+		Scheme: scheme,
 		Cache: cache.Options{
 			SyncPeriod: syncInterval,
+			ByObject: map[client.Object]cache.ByObject{
+				&apiextensionsv1.CustomResourceDefinition{}: {
+					Transform: customresourcesgate.TransformStripCRDSchema,
+				},
+			},
 		},
+		Client: clientOpts,
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
 		// election by default. Leases expire after 15 seconds, with a
@@ -133,12 +166,6 @@ func main() {
 		RenewDeadline:              func() *time.Duration { d := 50 * time.Second; return &d }(),
 	})
 	kingpin.FatalIfError(err, "Cannot create controller manager")
-
-	kingpin.FatalIfError(apiscluster.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(apisnamespaced.AddToScheme(mgr.GetScheme()), "Cannot add terraform APIs to scheme")
-	kingpin.FatalIfError(sourcev1.AddToScheme(mgr.GetScheme()), "Cannot add flux gitrepository APIs to scheme")
-	kingpin.FatalIfError(sourcev1beta2.AddToScheme(mgr.GetScheme()), "Cannot add flux ocirepository APIs to scheme")
-	kingpin.FatalIfError(apiextensionsv1.AddToScheme(mgr.GetScheme()), "Cannot register k8s apiextensions APIs to scheme")
 
 	metricRecorder := managed.NewMRMetricRecorder()
 	stateMetrics := statemetrics.NewMRStateMetrics()

@@ -7,9 +7,9 @@ tool golang.org/x/tools/cmd/goimports
 require (
 	github.com/MakeNowJust/heredoc/v2 v2.0.1
 	github.com/alecthomas/kingpin/v2 v2.4.0
-	github.com/crossplane/crossplane-runtime/v2 v2.3.3
-	github.com/crossplane/crossplane-tools v0.0.0-20260715161912-60e57f817ad1
-	github.com/crossplane/crossplane/apis/v2 v2.3.3
+	github.com/crossplane/crossplane-runtime/v2 v2.4.0
+	github.com/crossplane/crossplane-tools v0.0.0-20260719180100-659f1dc036c5
+	github.com/crossplane/crossplane/apis/v2 v2.4.0
 	github.com/fluxcd/source-controller/api v1.2.5
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
@@ -39,6 +39,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.59.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.59.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.43.6 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.18 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.37 // indirect
@@ -94,12 +95,10 @@ require (
 	github.com/go-openapi/swag/typeutils v0.29.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.0 // indirect
 	github.com/gobuffalo/flect v1.0.3 // indirect
-	github.com/google/cel-go v0.30.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.74 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
