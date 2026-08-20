@@ -13,5 +13,6 @@ organization](https://github.com/upbound/) will list their repository maintainer
 * Fatih Turken <fatih@upbound.io> ([turkenf](https://github.com/turkenf))
 * Alper Ulucinar <alper@upbound.io> ([ulucinar](https://github.com/ulucinar))
 * Erhan Cagirici <erhan@upbound.io> ([erhancagirici](https://github.com/erhancagirici))
+* Jonasz Łasut-Balcerzak <jonasz@upbound.io> ([jonasz-lasut](https://github.com/jonasz-lasut))
 
 See [CODEOWNERS](./CODEOWNERS) for automatic PR assignment.
