@@ -1,7 +1,7 @@
 # Terraform Provider
 
 > [!IMPORTANT]  
-> This provider is frozen at Terraform 1.5.7 and will not adopt any Terraform versions released under the BSL license. For newer capabilities, consider [provider-opentofu](https://github.com/upbound/provider-opentofu) instead.
+> This provider is frozen at Terraform 1.5.5 and will not adopt any Terraform versions released under the BSL license. For newer capabilities, consider [provider-opentofu](https://github.com/upbound/provider-opentofu) instead.
 
 <div align="center">
 
