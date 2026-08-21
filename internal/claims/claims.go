@@ -25,6 +25,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/pkg/errors"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -45,8 +46,11 @@ const (
 	// not run and should requeue.
 	Backoff
 	// Stolen means a foreign, stale claim was overwritten (R4). The caller
-	// now holds the claim but must verify/force-unlock any stale Terraform
-	// state lock left by the presumed-dead previous owner before running.
+	// now holds the claim and may run terraform. It must not clear any state
+	// lock the previous owner left behind: a stale claim proves only that
+	// heartbeats stopped, not that the apply did, and the state under a lock
+	// left by an interrupted apply is unknown. Acquire logs every takeover --
+	// see msgClaimStolen.
 	Stolen
 )
 
@@ -58,6 +62,8 @@ const (
 	errClearLease  = "cannot clear ownership claim lease"
 	errNotHolder   = "cannot heartbeat: this instance no longer holds the claim"
 )
+
+const msgClaimStolen = "Took over a stale ownership claim from a presumed-dead owner"
 
 // Config configures a Manager (design §7.1 flags).
 type Config struct {
@@ -79,6 +85,10 @@ type Config struct {
 	// HolderIdentity uniquely identifies this instance (e.g. its pod name).
 	HolderIdentity string
 
+	// Logger receives claim-takeover records (msgClaimStolen). It may be left
+	// nil, in which case NewManager substitutes a no-op logger.
+	Logger logging.Logger
+
 	// Namespace holds claim Leases for cluster-scoped Workspaces, which have
 	// no namespace of their own. Namespaced Workspaces' claims live in the
 	// Workspace's own namespace instead, so the Lease's owner reference
@@ -97,6 +107,9 @@ type Manager struct {
 
 // NewManager returns a claim Manager backed by kube.
 func NewManager(kube client.Client, cfg Config) *Manager {
+	if cfg.Logger == nil {
+		cfg.Logger = logging.NewNopLogger()
+	}
 	return &Manager{kube: kube, cfg: cfg, now: time.Now}
 }
 
@@ -136,6 +149,14 @@ func (m *Manager) Acquire(ctx context.Context, ws client.Object, ownerGVK schema
 		return Backoff, nil // R3
 	}
 
+	// How long the previous owner had been silent, read before stamp
+	// overwrites its heartbeat. A claim with no renewTime at all reads as
+	// never heartbeated rather than as zero staleness.
+	staleFor := "never heartbeated"
+	if lease.Spec.RenewTime != nil {
+		staleFor = m.now().Sub(lease.Spec.RenewTime.Time).String()
+	}
+
 	m.stamp(lease)
 	if err := m.kube.Update(ctx, lease); err != nil {
 		if kerrors.IsConflict(err) {
@@ -143,8 +164,16 @@ func (m *Manager) Acquire(ctx context.Context, ws client.Object, ownerGVK schema
 		}
 		return Backoff, errors.Wrap(err, errUpdateLease)
 	}
-	//Signifies that the lease is acquired from another owner with a stale claim.
+	// Signifies that the lease is acquired from another owner with a stale
+	// claim. Log it: this is the only record that the Workspace changed hands
+	// because its previous owner stopped heartbeating.
 	if foreign {
+		m.cfg.Logger.Info(msgClaimStolen,
+			"workspace", ws.GetName(),
+			"claim-lease", key.String(),
+			"previous-holder", holder,
+			"holder", m.cfg.HolderIdentity,
+			"stale-for", staleFor)
 		return Stolen, nil // R4
 	}
 	return Acquired, nil // R2: claim was empty or already ours

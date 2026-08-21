@@ -41,17 +41,27 @@ type GuardFunc func(ctx context.Context) error
 //   - R2 (empty/own claim): acquire, then run fn immediately.
 //   - R3 (foreign, fresh claim): fn is not called; Guard returns ErrBackoff
 //     so the caller requeues with backoff instead of running.
-//   - R4 (foreign, stale claim): the claim is stolen, unlock runs first to
-//     clear any state lock left by the presumed-dead owner, then fn runs.
+//   - R4 (foreign, stale claim): the claim is stolen and fn runs, exactly as
+//     for R2. Guard deliberately does not clear any Terraform state lock the
+//     presumed-dead owner left behind -- see below.
 //   - R5: while fn runs, the claim is heartbeated every cfg.HeartbeatInterval.
 //   - R6: the claim is released when fn returns, success or failure.
 //   - R7 (a label flip never interrupts a run): Guard has no part in this --
 //     it holds only for the fn call, which the caller's existing synchronous
 //     reconcile + exec.CommandContext binding already protects.
 //
+// A stolen claim never implies the state lock may be broken. The lock exists
+// because an apply was interrupted, so the state behind it is unknown:
+// clearing it would let fn apply over partially-written state and duplicate
+// real infrastructure. A stale claim is also not proof the old owner died --
+// it only proves its heartbeats stopped. So fn runs, Terraform fails to
+// acquire the lock, and the error surfaces for a human to resolve. Acquire
+// logs the takeover, which is what lets that human tell an orphaned lock
+// apart from one a live instance is still holding.
+//
 // If cfg.Enabled is false, Guard is a transparent pass-through to fn --
 // this is the parity guarantee for the (default) disabled case.
-func Guard(ctx context.Context, mgr *Manager, cfg Config, ws client.Object, ownerGVK schema.GroupVersionKind, unlock, fn GuardFunc) error {
+func Guard(ctx context.Context, mgr *Manager, cfg Config, ws client.Object, ownerGVK schema.GroupVersionKind, fn GuardFunc) error {
 	if !cfg.Enabled {
 		return fn(ctx)
 	}
@@ -60,15 +70,8 @@ func Guard(ctx context.Context, mgr *Manager, cfg Config, ws client.Object, owne
 	if err != nil {
 		return err
 	}
-
-	switch outcome {
-	case Backoff:
+	if outcome == Backoff {
 		return ErrBackoff
-	case Stolen:
-		if err := unlock(ctx); err != nil {
-			return err
-		}
-	case Acquired:
 	}
 
 	stop := make(chan struct{})

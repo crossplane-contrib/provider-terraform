@@ -121,7 +121,6 @@ type tfclient interface {
 	Destroy(ctx context.Context, o ...terraform.Option) error
 	DeleteCurrentWorkspace(ctx context.Context) error
 	GenerateChecksum(ctx context.Context) (string, error)
-	ForceUnlock(ctx context.Context, o ...terraform.Option) error
 }
 
 // Setup adds a controller that reconciles Workspace managed resources.
@@ -129,6 +128,9 @@ func Setup(mgr ctrl.Manager, o controller.Options, timeout, pollJitter time.Dura
 	name := managed.ControllerName(v1beta1.WorkspaceGroupKind)
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
+	// The claim Manager logs stale-claim takeovers; give it this
+	// controller's logger.
+	claimCfg.Logger = o.Logger
 	c := &connector{
 		kube:     mgr.GetClient(),
 		usage:    resource.NewLegacyProviderConfigUsageTracker(mgr.GetClient(), &v1beta1.ProviderConfigUsage{}),
@@ -601,7 +603,6 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.ApplyArgs))
 	err = claims.Guard(ctx, c.claimMgr, c.claimCfg, cr, v1beta1.WorkspaceGroupVersionKind,
-		func(ctx context.Context) error { return c.tf.ForceUnlock(ctx, o...) },
 		func(ctx context.Context) error { return c.tf.Apply(ctx, o...) },
 	)
 	if errors.Is(err, claims.ErrBackoff) {
@@ -648,7 +649,6 @@ func (c *external) Delete(ctx context.Context, mg resource.Managed) (managed.Ext
 
 	o = append(o, terraform.WithArgs(cr.Spec.ForProvider.DestroyArgs))
 	err = claims.Guard(ctx, c.claimMgr, c.claimCfg, cr, v1beta1.WorkspaceGroupVersionKind,
-		func(ctx context.Context) error { return c.tf.ForceUnlock(ctx, o...) },
 		func(ctx context.Context) error { return c.tf.Destroy(ctx, o...) },
 	)
 	if errors.Is(err, claims.ErrBackoff) {

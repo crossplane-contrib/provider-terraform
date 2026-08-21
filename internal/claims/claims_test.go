@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -196,6 +198,116 @@ func TestAcquire(t *testing.T) {
 				t.Errorf("Acquire(...) = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// recordingLogger captures the messages logged to it.
+type recordingLogger struct {
+	logging.Logger
+	msgs []string
+	kvs  [][]any
+}
+
+func (l *recordingLogger) Info(msg string, keysAndValues ...any) {
+	l.msgs = append(l.msgs, msg)
+	l.kvs = append(l.kvs, keysAndValues)
+}
+
+// the provider no longer force-unlocks, so a takeover is the
+// only thing that tells an operator a later state-lock failure belongs to a
+// dead owner (clearable by hand) rather than to a live one (never clearable).
+func TestAcquireLogsTakeover(t *testing.T) {
+	fixedNow := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+
+	cases := map[string]struct {
+		renewTime    *metav1.MicroTime
+		holder       *string
+		wantLogged   bool
+		wantStaleFor string
+	}{
+		"StaleForeignClaimIsLogged": {
+			holder:       holderPtr("instance-2"),
+			renewTime:    microTime(fixedNow.Add(-100 * time.Second)),
+			wantLogged:   true,
+			wantStaleFor: "1m40s", // read before stamp overwrites renewTime
+		},
+		"ForeignClaimWithNoHeartbeatIsLogged": {
+			holder:       holderPtr("instance-2"),
+			wantLogged:   true,
+			wantStaleFor: "never heartbeated",
+		},
+		"OwnClaimIsNotATakeover": {
+			holder:    holderPtr("instance-1"),
+			renewTime: microTime(fixedNow.Add(-100 * time.Second)),
+		},
+		"EmptyClaimIsNotATakeover": {
+			renewTime: microTime(fixedNow.Add(-100 * time.Second)),
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := &recordingLogger{}
+			c := &test.MockClient{
+				MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+					lease := obj.(*coordinationv1.Lease) //nolint:forcetypeassert // test double, always a Lease
+					lease.Spec.HolderIdentity = tc.holder
+					lease.Spec.RenewTime = tc.renewTime
+					return nil
+				}),
+				MockUpdate: test.NewMockUpdateFn(nil),
+			}
+			m := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second, Logger: l})
+			m.now = func() time.Time { return fixedNow }
+
+			if _, err := m.Acquire(context.Background(), testWorkspace(""), testGVK); err != nil {
+				t.Fatalf("Acquire(...): unexpected error: %v", err)
+			}
+
+			if !tc.wantLogged {
+				if len(l.msgs) != 0 {
+					t.Fatalf("logged %q, want nothing -- no claim was taken over", l.msgs)
+				}
+				return
+			}
+			if len(l.msgs) != 1 {
+				t.Fatalf("logged %d message(s) %q, want exactly 1", len(l.msgs), l.msgs)
+			}
+			if l.msgs[0] != msgClaimStolen {
+				t.Errorf("message = %q, want msgClaimStolen", l.msgs[0])
+			}
+			want := []any{
+				"workspace", "ws-a",
+				"claim-lease", "provider-ns/uid-a",
+				"previous-holder", "instance-2",
+				"holder", "instance-1",
+				"stale-for", tc.wantStaleFor,
+			}
+			if diff := cmp.Diff(want, l.kvs[0]); diff != "" {
+				t.Errorf("takeover log fields: -want, +got:\n%s", diff)
+			}
+		})
+	}
+}
+
+// A Manager built with no Logger must not panic when it logs a takeover.
+func TestAcquireNilLoggerDoesNotPanic(t *testing.T) {
+	c := &test.MockClient{
+		MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+			lease := obj.(*coordinationv1.Lease) //nolint:forcetypeassert // test double, always a Lease
+			lease.Spec.HolderIdentity = holderPtr("instance-2")
+			return nil
+		}),
+		MockUpdate: test.NewMockUpdateFn(nil),
+	}
+	m := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
+
+	got, err := m.Acquire(context.Background(), testWorkspace(""), testGVK)
+	if err != nil {
+		t.Fatalf("Acquire(...): unexpected error: %v", err)
+	}
+	if got != Stolen {
+		t.Errorf("Acquire(...) = %v, want Stolen", got)
 	}
 }
 

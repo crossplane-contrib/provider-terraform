@@ -432,10 +432,14 @@ spec:
 
 ### `--enable-ownership-claims` (optional): safe handover when a Workspace is relabeled
 
-When a Workspace's shard label changes while a `terraform apply` is still running on the old instance, a bare relabel is already safe by default (no destroy is triggered, and the Terraform state lock serializes any overlap) — this flag is **optional polish**, not a correctness requirement. Turning it on adds:
+When a Workspace's shard label changes while a `terraform apply` is still running on the old instance, a bare relabel is already safe by default (no destroy is triggered, and the Terraform state lock serializes any overlap) — this flag is **optional polish**, not a correctness requirement. What it adds is **noise suppression**: the incoming instance backs off quietly instead of repeatedly failing against a run the old owner is still finishing during the handover window.
 
-1. **Noise suppression** — the incoming instance backs off quietly instead of repeatedly failing against the held state lock during the handover window.
-2. **Automated crash recovery** — if the old owner crashed mid-apply, the new owner automatically runs `terraform force-unlock` once the old claim goes stale, instead of requiring a manual runbook.
+**What "safe" means here: a live claim is never overridden.** Each Workspace gets its own claim `Lease`. The instance about to run `terraform` takes that claim, heartbeats it every `--ownership-heartbeat-interval` for as long as the run lasts, and releases it when the run returns — success or failure. Another instance can only come into possession of that claim in one of two ways:
+
+- **The old owner released it.** The run finished and the claim is free, so the new owner takes it on its next reconcile. This is the ordinary case: relabel a Workspace that isn't mid-run and the handover costs nothing.
+- **The claim went stale.** No heartbeat for longer than `--ownership-claim-ttl`, which means the old owner is presumed dead. Only then does the new owner take it over, and the takeover is logged.
+
+A claim that is still being heartbeated is never taken. The incoming instance backs off and retries later instead, so a relabel cannot make two instances run `terraform` against the same Workspace's state at once — the new owner either waits for the old one to finish, or waits out the TTL.
 
 ```yaml
     - --enable-ownership-claims

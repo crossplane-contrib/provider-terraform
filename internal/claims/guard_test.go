@@ -34,9 +34,8 @@ func TestGuardDisabledIsPassthrough(t *testing.T) {
 	// not panic, proving the short-circuit happens before any claim I/O.
 	cfg := Config{Enabled: false}
 
-	var fnCalled, unlockCalled bool
+	var fnCalled bool
 	err := Guard(context.Background(), nil, cfg, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { unlockCalled = true; return nil },
 		func(ctx context.Context) error { fnCalled = true; return nil },
 	)
 	if err != nil {
@@ -44,9 +43,6 @@ func TestGuardDisabledIsPassthrough(t *testing.T) {
 	}
 	if !fnCalled {
 		t.Error("fn was not called")
-	}
-	if unlockCalled {
-		t.Error("unlock must not be called when claims are disabled")
 	}
 }
 
@@ -70,7 +66,6 @@ func TestGuardAcquiredRunsFnAndReleases(t *testing.T) {
 
 	var fnCalled bool
 	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { t.Fatal("unlock must not be called on a clean acquire"); return nil },
 		func(ctx context.Context) error { fnCalled = true; return nil },
 	)
 	if err != nil {
@@ -99,7 +94,6 @@ func TestGuardBackoffDoesNotRunFn(t *testing.T) {
 	mgr := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
 
 	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { t.Fatal("unlock must not be called on backoff"); return nil },
 		func(ctx context.Context) error { t.Fatal("fn must not run while a foreign claim is fresh"); return nil },
 	)
 	if !errors.Is(err, ErrBackoff) {
@@ -107,7 +101,9 @@ func TestGuardBackoffDoesNotRunFn(t *testing.T) {
 	}
 }
 
-func TestGuardStolenCallsUnlockThenFn(t *testing.T) {
+// stolenClaimManager returns a Manager whose next Acquire steals a stale,
+// foreign claim -- the R4 path.
+func stolenClaimManager() *Manager {
 	holder := "instance-2"
 	stale := time.Now().Add(-100 * time.Second)
 	c := &test.MockClient{
@@ -118,45 +114,34 @@ func TestGuardStolenCallsUnlockThenFn(t *testing.T) {
 			l.Spec.RenewTime = mt
 			return nil
 		}),
+		// Acquire's steal path writes the new holder via Update; this must
+		// succeed for Stolen to be returned at all.
 		MockUpdate: test.NewMockUpdateFn(nil),
 	}
-	mgr := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
+	return NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
+}
 
-	var order []string
-	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { order = append(order, "unlock"); return nil },
-		func(ctx context.Context) error { order = append(order, "fn"); return nil },
+func TestGuardStolenRunsFn(t *testing.T) {
+	var fnCalled bool
+	err := Guard(context.Background(), stolenClaimManager(), Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
+		func(ctx context.Context) error { fnCalled = true; return nil },
 	)
 	if err != nil {
 		t.Fatalf("Guard(...): unexpected error: %v", err)
 	}
-	if len(order) != 2 || order[0] != "unlock" || order[1] != "fn" {
-		t.Errorf("call order = %v, want [unlock fn]", order)
+	if !fnCalled {
+		t.Error("fn was not called after the stale claim was stolen")
 	}
 }
 
-func TestGuardUnlockErrorPreventsFn(t *testing.T) {
-	holder := "instance-2"
-	stale := time.Now().Add(-100 * time.Second)
-	c := &test.MockClient{
-		MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
-			l := obj.(*coordinationv1.Lease) //nolint:forcetypeassert // test double, always a Lease
-			l.Spec.HolderIdentity = &holder
-			mt := microTime(stale)
-			l.Spec.RenewTime = mt
-			return nil
-		}),
-		// Acquire's steal path writes the new holder via Update *before*
-		// Guard ever calls unlock -- this must succeed for Stolen to be
-		// returned at all.
-		MockUpdate: test.NewMockUpdateFn(nil),
-	}
-	mgr := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
-
-	wantErr := errors.New("force-unlock failed")
-	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
+func TestGuardStolenSurfacesLockError(t *testing.T) {
+	// stealing a stale claim must not clear the state lock the
+	// presumed-dead owner left behind. fn therefore runs straight into
+	// Terraform's lock error, and Guard must hand that error back so it
+	// reaches the Workspace's Synced condition instead of being swallowed.
+	wantErr := errors.New("Error acquiring the state lock")
+	err := Guard(context.Background(), stolenClaimManager(), Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
 		func(ctx context.Context) error { return wantErr },
-		func(ctx context.Context) error { t.Fatal("fn must not run when unlock fails"); return nil },
 	)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
@@ -180,7 +165,6 @@ func TestGuardFnErrorTakesPrecedenceOverReleaseError(t *testing.T) {
 
 	fnErr := errors.New("apply failed")
 	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: time.Hour}, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { return nil },
 		func(ctx context.Context) error { return fnErr },
 	)
 	if !errors.Is(err, fnErr) {
@@ -210,7 +194,6 @@ func TestGuardHeartbeatsWhileFnRuns(t *testing.T) {
 	mgr := NewManager(c, Config{HolderIdentity: "instance-1", Namespace: "provider-ns", TTL: 90 * time.Second})
 
 	err := Guard(context.Background(), mgr, Config{Enabled: true, HeartbeatInterval: 5 * time.Millisecond}, testWorkspace(""), testGVK,
-		func(ctx context.Context) error { return nil },
 		func(ctx context.Context) error { time.Sleep(40 * time.Millisecond); return nil },
 	)
 	if err != nil {

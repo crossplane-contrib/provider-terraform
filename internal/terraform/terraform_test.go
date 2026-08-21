@@ -210,59 +210,6 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestParseLockID(t *testing.T) {
-	cases := map[string]struct {
-		stderr string
-		want   string
-		wantOk bool
-	}{
-		"LockHeld": {
-			stderr: heredoc.Doc(`
-				Error: Error acquiring the state lock
-
-				Error message: leases.coordination.k8s.io "some-workspace-lock" already exists
-				Lock Info:
-				  ID:        d3a1f8c2-1234-5678-9abc-def012345678
-				  Path:      some-workspace
-				  Operation: OperationTypeApply
-				  Who:       instance-2@provider-terraform
-				  Version:   1.5.7
-				  Created:   2026-07-03 12:00:00.000000 +0000 UTC
-				  Info:
-			`),
-			want:   "d3a1f8c2-1234-5678-9abc-def012345678",
-			wantOk: true,
-		},
-		"NoLockInfo": {
-			stderr: heredoc.Doc(`
-				Error: Unsupported argument
-
-				  on test.tf line 10, in resource "aws_s3_bucket" "example":
-				  10:   name = "cp-example"
-
-				An argument named "name" is not expected here.
-			`),
-			wantOk: false,
-		},
-		"Empty": {
-			stderr: "",
-			wantOk: false,
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got, ok := parseLockID([]byte(tc.stderr))
-			if ok != tc.wantOk {
-				t.Fatalf("parseLockID(...): ok = %v, want %v", ok, tc.wantOk)
-			}
-			if got != tc.want {
-				t.Errorf("parseLockID(...) = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestFormatTerraformErrorOutput(t *testing.T) {
 	tferrs := make(map[string]string)
 	expectedOutput := make(map[string]map[string]string)
