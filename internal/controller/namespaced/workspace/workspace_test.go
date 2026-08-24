@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	xpv2 "github.com/crossplane/crossplane-runtime/v2/apis/common/v2"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/google/go-cmp/cmp"
 	"github.com/pkg/errors"
@@ -34,10 +33,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 
 	"github.com/upbound/provider-terraform/apis/namespaced"
 	"github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
@@ -202,7 +201,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -222,7 +221,7 @@ func TestConnect(t *testing.T) {
 							// for credentials from the environment, but not
 							// specifying an environment variable.
 							pc.Spec.Credentials = []v1beta1.ProviderCredentials{{
-								Source: xpv1.CredentialsSourceEnvironment,
+								Source: xpv2.CredentialsSourceEnvironment,
 							}}
 						}
 						return nil
@@ -248,7 +247,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -265,7 +264,7 @@ func TestConnect(t *testing.T) {
 						if pc, ok := obj.(*v1beta1.ClusterProviderConfig); ok {
 							pc.Spec.Credentials = []v1beta1.ProviderCredentials{{
 								Filename: tfCreds,
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
@@ -297,7 +296,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -314,7 +313,7 @@ func TestConnect(t *testing.T) {
 						if pc, ok := obj.(*v1beta1.ClusterProviderConfig); ok {
 							pc.Spec.Credentials = []v1beta1.ProviderCredentials{{
 								Filename: tfCreds,
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
@@ -346,7 +345,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -368,7 +367,7 @@ func TestConnect(t *testing.T) {
 						if pc, ok := obj.(*v1beta1.ClusterProviderConfig); ok {
 							pc.Spec.Credentials = []v1beta1.ProviderCredentials{{
 								Filename: ".git-credentials",
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
@@ -399,7 +398,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -420,7 +419,7 @@ func TestConnect(t *testing.T) {
 						if pc, ok := obj.(*v1beta1.ClusterProviderConfig); ok {
 							pc.Spec.Credentials = []v1beta1.ProviderCredentials{{
 								Filename: ".git-credentials",
-								Source:   xpv1.CredentialsSourceNone,
+								Source:   xpv2.CredentialsSourceNone,
 							}}
 						}
 						return nil
@@ -451,7 +450,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -501,7 +500,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -554,7 +553,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -594,7 +593,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -638,7 +637,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -682,7 +681,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -720,7 +719,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -756,7 +755,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -790,7 +789,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -834,7 +833,7 @@ func TestConnect(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{UID: uid},
 					Spec: v1beta1.WorkspaceSpec{
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -883,7 +882,7 @@ func TestConnect(t *testing.T) {
 							InitArgs: []string{"-upgrade=true"},
 						},
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},
@@ -939,7 +938,7 @@ func TestConnect(t *testing.T) {
 							InitArgs: []string{"-upgrade=true"},
 						},
 						ManagedResourceSpec: xpv2.ManagedResourceSpec{
-							ProviderConfigReference: &xpv1.ProviderConfigReference{
+							ProviderConfigReference: &xpv2.ProviderConfigReference{
 								Kind: "ClusterProviderConfig",
 							},
 						},

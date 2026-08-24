@@ -37,18 +37,20 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	sourcev1beta2 "github.com/fluxcd/source-controller/api/v1beta2"
-	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
-	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 	zapuber "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	apiscluster "github.com/upbound/provider-terraform/apis/cluster"
+	apisnamespaced "github.com/upbound/provider-terraform/apis/namespaced"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -57,6 +59,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	authv1 "k8s.io/api/authorization/v1"
 
 	clusterv1beta1 "github.com/upbound/provider-terraform/apis/cluster/v1beta1"
 	namespacedv1beta1 "github.com/upbound/provider-terraform/apis/namespaced/v1beta1"
@@ -67,7 +71,6 @@ import (
 	"github.com/upbound/provider-terraform/internal/controller/gc"
 	namespacedworkspace "github.com/upbound/provider-terraform/internal/controller/namespaced"
 	"github.com/upbound/provider-terraform/internal/features"
-	authv1 "k8s.io/api/authorization/v1"
 )
 
 func init() {
@@ -91,6 +94,7 @@ func main() {
 		pollStateMetricInterval  = app.Flag("poll-state-metric", "State metric recording interval").Default("5s").Duration()
 		pollJitter               = app.Flag("poll-jitter", "If non-zero, varies the poll interval by a random amount up to plus-or-minus this value.").Default("1m").Duration()
 		timeout                  = app.Flag("timeout", "Controls how long Terraform processes may run before they are killed.").Default("20m").Duration()
+		gcInterval               = app.Flag("gc-interval", "Controls how often the workspace directory garbage collector runs. Lower values reclaim disk sooner; higher values reduce filesystem scans. Set to 0 to disable the garbage collector entirely. Has no effect on whether a workspace directory can be prematurely removed.").Default("1h").Duration()
 		leaderElection           = app.Flag("leader-election", "Use leader election for the controller manager.").Short('l').Default("false").Envar("LEADER_ELECTION").Bool()
 		leaderElectionID         = app.Flag("leader-election-id", "Name of the leader election lease. Set a distinct value per instance so leaders of different instances run concurrently.").Default(defaultLeaderElectionID).Envar("LEADER_ELECTION_ID").String()
 		watchLabelSelector       = app.Flag("watch-label-selector", "Restrict the manager cache to Workspaces matching this label selector. Empty (default) watches all Workspaces.").Default("").Envar("WATCH_LABEL_SELECTOR").String()
@@ -99,6 +103,7 @@ func main() {
 		enableChangeLogs         = app.Flag("enable-changelogs", "Enable support for capturing change logs during reconciliation.").Default("false").Envar("ENABLE_CHANGE_LOGS").Bool()
 		changelogsSocketPath     = app.Flag("changelogs-socket-path", "Path for changelogs socket (if enabled)").Default("/var/run/changelogs/changelogs.sock").Envar("CHANGELOGS_SOCKET_PATH").String()
 		logEncoding              = app.Flag("log-encoding", "Container logging output ending. Possible values: console, json").Default("console").Enum("console", "json")
+		enableSecretCache        = app.Flag("enable-secret-cache", "Enable caching of Secret objects. When true, Secrets are served from the informer cache instead of direct API calls. This reduces API server load but increases memory usage.").Default("true").Envar("ENABLE_SECRET_CACHE").Bool()
 		enableOwnershipClaims    = app.Flag("enable-ownership-claims", "Guard every Terraform run with a per-Workspace ownership claim, for safe handover when a Workspace is relabeled between instances.").Default("false").Envar("ENABLE_OWNERSHIP_CLAIMS").Bool()
 		ownershipClaimTTL        = app.Flag("ownership-claim-ttl", "How long an ownership claim's heartbeat may go stale before another instance may steal it.").Default("90s").Envar("OWNERSHIP_CLAIM_TTL").Duration()
 		ownershipHeartbeat       = app.Flag("ownership-heartbeat-interval", "How often a held ownership claim's heartbeat is renewed while Terraform is running.").Default("30s").Envar("OWNERSHIP_HEARTBEAT_INTERVAL").Duration()
@@ -139,6 +144,7 @@ func main() {
 		"sync-period", syncInterval.String(),
 		"poll-interval", pollInterval.String(),
 		"poll-jitter", pollJitter.String(),
+		"gc-interval", gcInterval.String(),
 		"max-reconcile-rate", *maxReconcileRate)
 
 	cfg, err := ctrl.GetConfig()
@@ -146,12 +152,26 @@ func main() {
 
 	scheme := buildScheme()
 
+	// Client options to control secret caching behavior.
+	var clientOpts client.Options
+	if !*enableSecretCache {
+		// When secret caching is disabled, configure the
+		// client to bypass the cache for Secret objects. This means
+		// Get/List calls for Secrets will go directly to the API server.
+		clientOpts = client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		}
+	}
+
 	mgr, err := ctrl.NewManager(ratelimiter.LimitRESTConfig(cfg, *maxReconcileRate), ctrl.Options{
 		Scheme: scheme,
 		Cache: cache.Options{
 			SyncPeriod: syncInterval,
-			ByObject:   workspaceCache,
+			ByObject:   managerCacheByObject(workspaceCache),
 		},
+		Client: clientOpts,
 
 		// controller-runtime uses both ConfigMaps and Leases for leader
 		// election by default. Leases expire after 15 seconds, with a
@@ -223,7 +243,7 @@ func main() {
 
 	// NOTE: cluster-scoped and namespaced Workspaces share a common
 	// workspace root directory. Update GC setup if they diverge
-	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log), "cannot setup Workspace garbage collector controller")
+	kingpin.FatalIfError(gc.Setup(mgr, workspace.GetTerraformDir(), log, gc.WithInterval(*gcInterval)), "cannot setup Workspace garbage collector controller")
 	canSafeStart, err := canWatchCRD(ctx, mgr)
 	kingpin.FatalIfError(err, "SafeStart precheck failed")
 	if canSafeStart {
@@ -276,6 +296,22 @@ func workspaceCacheByObject(selector string) (map[client.Object]cache.ByObject, 
 		&clusterv1beta1.Workspace{}:    {Label: sel},
 		&namespacedv1beta1.Workspace{}: {Label: sel},
 	}, nil
+}
+
+// managerCacheByObject assembles the manager's full per-type cache options:
+// the Workspace label scoping from workspaceCacheByObject, plus the CRD
+// schema stripping the SafeStart gate relies on (it only needs CRD names, and
+// the schemas dominate cached CRD memory).
+func managerCacheByObject(workspaceCache map[client.Object]cache.ByObject) map[client.Object]cache.ByObject {
+	byObject := map[client.Object]cache.ByObject{
+		&apiextensionsv1.CustomResourceDefinition{}: {
+			Transform: customresourcesgate.TransformStripCRDSchema,
+		},
+	}
+	for obj, opts := range workspaceCache {
+		byObject[obj] = opts
+	}
+	return byObject
 }
 
 // inClusterNamespacePath is where a pod's own namespace is projected by the

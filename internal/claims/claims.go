@@ -23,6 +23,7 @@ package claims
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
@@ -210,10 +211,27 @@ func (m *Manager) isFresh(lease *coordinationv1.Lease) bool {
 func (m *Manager) stamp(lease *coordinationv1.Lease) {
 	now := metav1.NewMicroTime(m.now())
 	holder := m.cfg.HolderIdentity
-	dur := int32(m.cfg.TTL / time.Second)
+	dur := leaseDurationSeconds(m.cfg.TTL)
 	lease.Spec.HolderIdentity = &holder
 	lease.Spec.RenewTime = &now
 	lease.Spec.LeaseDurationSeconds = &dur
+}
+
+// leaseDurationSeconds renders ttl as a Lease's leaseDurationSeconds, clamped
+// to the field's int32 range. The field is advisory metadata for observers --
+// this package's own staleness decisions read cfg.TTL directly via isFresh --
+// so clamping an absurd --ownership-claim-ttl is preferable to wrapping it
+// around into a negative duration.
+func leaseDurationSeconds(ttl time.Duration) int32 {
+	secs := int64(ttl / time.Second)
+	switch {
+	case secs < 0:
+		return 0
+	case secs > math.MaxInt32:
+		return math.MaxInt32
+	default:
+		return int32(secs)
+	}
 }
 
 // Heartbeat renews the claim's renewTime while a run is executing (R5). It
