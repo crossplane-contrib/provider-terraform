@@ -23,34 +23,25 @@ import (
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 
+	"github.com/upbound/provider-terraform/internal/claims"
 	"github.com/upbound/provider-terraform/internal/controller/namespaced/config"
 	"github.com/upbound/provider-terraform/internal/controller/namespaced/workspace"
 )
 
 // Setup creates all TF controllers with the supplied logger and adds them
 // to the supplied manager.
-func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration) error {
-	for _, setup := range []func(ctrl.Manager, controller.Options, time.Duration, time.Duration) error{
-		config.Setup,
-		workspace.Setup,
-	} {
-		if err := setup(mgr, o, timeout, pollJitter); err != nil {
-			return err
-		}
+func Setup(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration, claimCfg claims.Config) error {
+	if err := config.Setup(mgr, o, timeout, pollJitter); err != nil {
+		return err
 	}
-	return nil
+	return workspace.Setup(mgr, o, timeout, pollJitter, claimCfg)
 }
 
 // SetupGated creates all controllers with the supplied logger and adds them to
 // the supplied manager gated.
-func SetupGated(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration) error {
-	for _, setup := range []func(ctrl.Manager, controller.Options, time.Duration, time.Duration) error{
-		config.SetupGated,
-		workspace.SetupGated,
-	} {
-		if err := setup(mgr, o, timeout, pollJitter); err != nil {
-			return err
-		}
+func SetupGated(mgr ctrl.Manager, o controller.Options, timeout time.Duration, pollJitter time.Duration, claimCfg claims.Config) error {
+	if err := config.SetupGated(mgr, o, timeout, pollJitter); err != nil {
+		return err
 	}
-	return nil
+	return workspace.SetupGated(mgr, o, timeout, pollJitter, claimCfg)
 }
