@@ -17,8 +17,15 @@ limitations under the License.
 package terraform
 
 import (
+	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/MakeNowJust/heredoc/v2"
 	"github.com/google/go-cmp/cmp"
@@ -287,4 +294,77 @@ func TestFormatTerraformErrorOutput(t *testing.T) {
 			expectedOutput["tooManyListItems"]["base64full"],
 		)
 	}
+}
+
+func TestRunCommandCancel(t *testing.T) {
+	grace := cancelGracePeriod
+	cancelGracePeriod = 2 * time.Second
+	t.Cleanup(func() { cancelGracePeriod = grace })
+
+	// A background job of a non-interactive shell ignores SIGINT, like a provider
+	// plugin, and keeps the stdout pipe open after the shell exits.
+	cases := map[string]struct {
+		script      string
+		wantStopped bool
+	}{
+		"LeaderStopsGracefully": {
+			script:      `trap 'echo stopped > "$DIR/stopped"; exit 1' INT; sleep 60 > /dev/null & echo $! > "$DIR/child"; wait`,
+			wantStopped: true,
+		},
+		"ChildHoldsStdout": {
+			script: `sleep 60 & echo $! > "$DIR/child"; wait`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+
+			cmd := exec.CommandContext(ctx, "/bin/sh", "-c", tc.script)
+			cmd.Env = append(os.Environ(), "DIR="+dir)
+
+			start := time.Now()
+			_, err := runCommand(ctx, cmd)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("runCommand(...): want context.DeadlineExceeded, got %v", err)
+			}
+			if elapsed := time.Since(start); elapsed > cancelGracePeriod+5*time.Second {
+				t.Errorf("runCommand(...): returned after %s, want within the grace period", elapsed)
+			}
+
+			_, statErr := os.Stat(filepath.Join(dir, "stopped"))
+			if stopped := statErr == nil; stopped != tc.wantStopped {
+				t.Errorf("leader stopped gracefully: want %t, got %t", tc.wantStopped, stopped)
+			}
+
+			b, err := os.ReadFile(filepath.Join(dir, "child"))
+			if err != nil {
+				t.Fatalf("cannot read child pid: %v", err)
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+			if err != nil {
+				t.Fatalf("cannot parse child pid: %v", err)
+			}
+			if !waitExited(pid, 5*time.Second) {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+				t.Errorf("child %d still running after runCommand returned", pid)
+			}
+		})
+	}
+}
+
+// waitExited reports whether pid is gone or a zombie before timeout.
+func waitExited(pid int, timeout time.Duration) bool {
+	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		stat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+		if err != nil {
+			return true
+		}
+		if f := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:])); len(f) > 0 && f[0] == "Z" {
+			return true
+		}
+	}
+	return false
 }
