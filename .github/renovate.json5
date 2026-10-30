@@ -78,6 +78,50 @@
   osvVulnerabilityAlerts: true,
   packageRules: [
     {
+      description: 'Bump the go directive in go.mod',
+      matchManagers: [
+        'gomod',
+      ],
+      matchDepTypes: [
+        'golang',
+      ],
+      rangeStrategy: 'bump',
+    },
+    {
+      description: 'Bump the Go version in go.mod and workflows together',
+      matchManagers: [
+        'gomod',
+        'custom.regex',
+      ],
+      matchDatasources: [
+        'golang-version',
+      ],
+      separateMinorPatch: true,
+      groupName: 'golang version',
+      groupSlug: 'golang-version',
+    },
+    {
+      description: 'Minor bumps of the Go version require approval from the Dependency Dashboard',
+      matchDatasources: [
+        'golang-version',
+      ],
+      matchUpdateTypes: [
+        'major',
+        'minor',
+      ],
+      dependencyDashboardApproval: true,
+    },
+    {
+      description: 'Prioritize Go version patch bumps over other updates when PR limits are reached',
+      matchDatasources: [
+        'golang-version',
+      ],
+      matchUpdateTypes: [
+        'patch',
+      ],
+      prPriority: 10,
+    },
+    {
       description: 'Only get Docker image updates every 2 weeks to reduce noise',
       matchDatasources: [
         'docker',

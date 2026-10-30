@@ -10,9 +10,8 @@ PLATFORMS ?= linux_amd64 linux_arm64
 -include build/makelib/output.mk
 
 # Setup Go
-GO_REQUIRED_VERSION ?= 1.24
 NPROCS ?= 1
-GOLANGCILINT_VERSION = 2.13.1
+GOLANGCILINT_VERSION = 2.15.0
 GO_TEST_PARALLEL := $(shell echo $$(( $(NPROCS) / 2 )))
 GO_STATIC_PACKAGES = $(GO_PROJECT)/cmd/provider
 GO_LDFLAGS += -X $(GO_PROJECT)/pkg/version.Version=$(VERSION)
@@ -24,7 +23,7 @@ GO111MODULE = on
 # ====================================================================================
 # Setup Kubernetes tools
 
-KIND_VERSION = v0.32.0
+KIND_VERSION = v0.33.0
 UPTEST_VERSION = v2.2.0
 KUSTOMIZE_VERSION = v5.3.0
 YQ_VERSION = v4.40.5

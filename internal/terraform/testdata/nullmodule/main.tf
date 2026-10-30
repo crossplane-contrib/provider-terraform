@@ -16,10 +16,10 @@ output "randomness" {
 terraform {
   required_providers {
     null = {
-      version = "3.3.1"
+      version = "3.3.2"
     }
     random = {
-      version = "3.9.0"
+      version = "3.9.1"
     }
   }
 }
