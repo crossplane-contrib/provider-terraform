@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/pkg/errors"
@@ -45,8 +46,6 @@ const (
 	errWriteVarFile     = "cannot write tfvars file"
 	errFmtInvalidConfig = "invalid Terraform configuration: found %d errors"
 	errRunCommand       = "shutdown while running terraform command"
-	errSigTerm          = "error sending SIGTERM to child process"
-	errWaitTerm         = "error waiting for child process to terminate"
 	errWriteLogs        = "error writing terraform logs to stdout"
 
 	tfDefault = "default"
@@ -676,35 +675,29 @@ func (h Harness) Destroy(ctx context.Context, o ...Option) error {
 	return Classify(err)
 }
 
-// cmdResult represents the result of the command execution
-type cmdResult struct {
-	out []byte
-	err error
-}
+// cancelGracePeriod is how long a cancelled command has to exit after SIGINT
+// before it is killed and its output pipes are closed.
+var cancelGracePeriod = 2 * time.Minute
 
-// runCommand executes the requested command and sends the process SIGTERM if the context finishes before the command
+// runCommand runs c in its own process group. When ctx is done the group gets
+// SIGINT, which Terraform handles as a graceful stop that releases the state
+// lock, and provider plugins ignore. Whatever is still running in the group
+// after cancelGracePeriod is killed.
 func runCommand(ctx context.Context, c *exec.Cmd) ([]byte, error) {
-	ch := make(chan cmdResult, 1)
-	go func() {
-		defer close(ch)
-		r, e := c.Output()
-		ch <- cmdResult{out: r, err: e}
-	}()
-	select {
-	case <-ctx.Done():
-		err := ctx.Err()
-		// This could be container termination or the reconciliation deadline was exceeded.  Either way send a
-		// SIGTERM to the running process and wait for either the command to finish or the process to get killed.
-		e := c.Process.Signal(syscall.SIGTERM)
-		if e != nil {
-			return nil, errors.Wrap(errors.Wrap(err, errRunCommand), errors.Wrap(e, errSigTerm).Error())
-		}
-		e = c.Wait()
-		if e != nil {
-			return nil, errors.Wrap(errors.Wrap(err, errRunCommand), errors.Wrap(e, errWaitTerm).Error())
-		}
-		return nil, errors.Wrap(err, errRunCommand)
-	case res := <-ch:
-		return res.out, res.err
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		return syscall.Kill(-c.Process.Pid, syscall.SIGINT)
 	}
+	c.WaitDelay = cancelGracePeriod
+
+	out, err := c.Output()
+	if err == nil || ctx.Err() == nil {
+		return out, err
+	}
+	// WaitDelay kills only the group leader. Plugins it started would otherwise
+	// keep running with no parent waiting for them.
+	if c.Process != nil {
+		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+	}
+	return nil, errors.Wrap(ctx.Err(), errRunCommand)
 }
